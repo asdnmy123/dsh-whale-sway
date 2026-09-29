@@ -77,11 +77,25 @@ mask-position: 0 calc(var(--dsh-whale-frame, 0) / 23 * 100%);   /* 整格位移 
 
 ## 安装
 
+一条指令完成（无需克隆仓库、无需编辑任何配置、无需构建）：
+
 ```powershell
-pnpm add link:D:/dsh-plugins/dsh-icon
+dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.2.0
 ```
 
-在 `cordis.yml` 的 loader 段加入 `include:dsh-whale-sway`，随后刷新页面或重启 DSH 即可生效。包内已含 `cordis.patch.yml`，标准安装无需手工修改配置。
+`--profile` 填要装入的 profile 名（桌面版为 `desktop`）。该命令把本包登记为该 profile 的依赖，并把本插件追加进 `dsh.profile.bundles`；profile 不存在时自动初始化。执行后刷新页面或重启 DSH 即生效。
+
+卸载同样一条指令：`dsh plugin --profile desktop remove dsh-whale-sway`。
+
+| 目的 | 把 spec 换成 |
+| --- | --- |
+| 固定版本（推荐，供应链安全） | `github:asdnmy123/dsh-whale-sway#v0.2.0` |
+| 跟随 `main` 最新提交 | `github:asdnmy123/dsh-whale-sway` |
+| 装本地检出（改完即生效，开发用） | `link:D:/dsh-plugins/dsh-icon` |
+
+图形界面：设置 → 插件 页面可启用、停用、卸载已安装的 bundle；安装新的 spec 用上面那条命令，或在会话中直接要求执行。
+
+本包随仓库即产物：`client.js` 已内联帧带与样式表，包内没有 `prepare`/`build` 脚本，因此 git 安装不需要任何 pnpm 构建许可，安装期也不会执行包内代码（实测无提示、无 allowlist）。若本包发布到 npm 注册表，命令可再缩短为 `dsh plugin --profile desktop add dsh-whale-sway`。
 
 ## 配置
 
