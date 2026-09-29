@@ -83,7 +83,7 @@ mask-position: 0 calc(var(--dsh-whale-frame, 0) / 23 * 100%);   /* 整格位移 
 dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.2.0
 ```
 
-`--profile` 填要装入的 profile 名（桌面版为 `desktop`）。该命令把本包登记为该 profile 的依赖，并把本插件追加进 `dsh.profile.bundles`；profile 不存在时自动初始化。执行后刷新页面或重启 DSH 即生效。
+`--profile` 不是固定值：桌面版是 `desktop`，其他组合（`web`、`tui`、自建 profile）换成对应名称即可。该命令把本包登记为该 profile 的依赖，并把本插件追加进 `dsh.profile.bundles`；profile 不存在时自动初始化。执行后刷新页面或重启 DSH 即生效。
 
 卸载同样一条指令：`dsh plugin --profile desktop remove dsh-whale-sway`。
 
@@ -91,7 +91,8 @@ dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.2.0
 | --- | --- |
 | 固定版本（推荐，供应链安全） | `github:asdnmy123/dsh-whale-sway#v0.2.0` |
 | 跟随 `main` 最新提交 | `github:asdnmy123/dsh-whale-sway` |
-| 装本地检出（改完即生效，开发用） | `link:D:/dsh-plugins/dsh-icon` |
+| 装本地检出（改完即生效，开发用） | `link:<本目录绝对路径>`（例 `link:D:/path/to/dsh-whale-sway`、`link:/home/you/dsh-whale-sway`） |
+| 无网络 / 内网环境 | `./dsh-whale-sway-0.2.0.tgz`（`npm pack` 产物约 25.6 KiB，在调用目录解析相对路径，不经过 git，也不需要访问 GitHub） |
 
 图形界面：设置 → 插件 页面可启用、停用、卸载已安装的 bundle；安装新的 spec 用上面那条命令，或在会话中直接要求执行。
 
