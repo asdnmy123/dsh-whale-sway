@@ -4,105 +4,139 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](#)
 
-> 让 DSH 运行状态行那个鲸尾真正摆起来：**逐帧画面组合、零旋转**，摆动快慢跟随实时 tok/s。
-> Frame-by-frame whale-tail sway for the DeepSeek Harness running indicator, driven by the live token rate — no transform, no rotation.
+**为 DeepSeek Harness 运行状态行提供帧序列驱动的鲸尾动画：摆动速度实时跟随模型 token 输出速率。**
 
-| 快速吐字（约 47 tok/s） | 空闲 / 等工具（约 7 tok/s） |
+> A frame-composed whale-tail sway for the DeepSeek Harness running indicator, driven by the live token rate.
+
+| 高速输出（约 47 tok/s） | 空闲等待（约 7 tok/s） |
 | --- | --- |
-| ![fast](preview/sway-fast.gif) | ![slow](preview/sway-slow.gif) |
+| ![高速输出](preview/sway-fast.gif) | ![空闲等待](preview/sway-slow.gif) |
 
-## 它是怎么摆的
+## 概述
 
-运行状态行（`深度求索中，用时 N 秒 ···`）左边那枚鲸尾，原版是一张把时序烤进图里的 base64 APNG 当 CSS mask 用——**样式表改不动它的速度**。本插件把它换成一条**预先画好的帧带**：
+DeepSeek Harness 运行状态行（`深度求索中，用时 N 秒 ···`）左侧的鲸尾，出厂实现为一枚内嵌 APNG 遮罩：其播放时序固化在图像数据内部，样式表无法干预其速度与幅度。
 
-1. **用你自己的素材**：`preview/2C42C558D17C2745D1D47ED3DE000BD2.gif`（360×360、24 帧、20ms/帧）被零依赖解码成 24 张 RGBA 帧。
-2. **去白底**：按墨色亮度反解 alpha —— `a = clamp((255 − L) / (255 − 92), 0, 1)`，再做一点点对比清理。纯白像素的 alpha 是 **0**，白底彻底消失，于是图标可以用 shell 自己的 `currentColor` 上色，深色模式自动跟随。
-3. **拼成帧带**：24 个方格纵向排成一张 PNG（`preview/frames-sheet.png`），base64 内联进 `client.js`。
-4. **运行时只写一个整数**：把 `--dsh-whale-frame` 设成 `0..23` 的**整数值**，`mask-position` 按整格滑动，把那一格露出来。
+`dsh-whale-sway` 将该指示图标替换为一条**预渲染帧带**，把动画明确拆分为「离线生成帧序列」与「运行时逐帧呈现」两个阶段。运行时不对图形做任何形变、位移或旋转，仅依据当前吞吐量选择应显示的整帧画面。
 
-**全程没有任何 `transform` / `rotate` / `translate` / `matrix`。** 摆动是"换画"，不是"转画"——帧与帧之间不插值，不扭曲，不整体旋转。
+## 特性
+
+- **帧序列驱动** —— 摆动由 24 张预渲染画面逐帧切换构成，帧间不做插值或形变。
+- **零变换** —— 输出样式表不包含 `transform`、`rotate`、`translate`、`matrix`、`scale` 等任何变换声明，动画完全由遮罩位移实现。
+- **速率自适应** —— 摆动周期由会话实时吞吐量决定，空闲放慢、高速加快；相位以积分方式推进，速率变化表现为连续加速，而非时间轴重启造成的跳变。
+- **原生幅度** —— 摆幅完整取自帧序列素材的原始运动，不做放大或缩小。
+- **主题自适应** —— 图标以 `currentColor` 绘制，自动适配明暗主题与强调色。
+- **静默降级** —— 任一环节异常时保持 Harness 原有渲染，不干扰会话内容。
+
+## 工作原理
+
+1. **帧提取** —— 构建期以零依赖解码器提取素材的 24 张 RGBA 画面。
+2. **背景剔除** —— 按墨色亮度反解笔画覆盖度，纯白背景 alpha 归零，仅保留笔画覆盖：
+
+   `a = clamp((clamp((255 − L) / (255 − 92), 0, 1) − 0.02) / 0.96, 0, 1)`
+
+3. **帧带封装** —— 24 格方形画面纵向拼合为单张 PNG，以 base64 内联于客户端模块（14,156 字符）。
+4. **逐帧呈现** —— 运行时仅写入一个整数自定义属性，遮罩按整格位移显示对应画面。
 
 ```css
-mask-size:     100% 2400%;                                   /* 一格宽，24 格高 */
-mask-position: 0 calc(var(--dsh-whale-frame, 0) / 23 * 100%); /* 整格跳 */
+/* 每个动画帧只改变一个整数，不产生任何变换 */
+mask-size:     100% 2400%;                                     /* 一格宽，24 格高 */
+mask-position: 0 calc(var(--dsh-whale-frame, 0) / 23 * 100%);   /* 整格位移 */
 ```
 
-## 速度怎么跟 tok/s 挂钩
+帧索引由相位积分得出：`phase += dt / period(rate)`，`index = ⌊phase × 24⌋`。
 
-客户端 API 拿不到 token 计数（客户端事件只有 4 个），所以按你**感知到**的速率测量：会话每秒新增的字符数 ÷ 每 token 字符数，再做 EMA 平滑。它与真实 tok/s 单调相关。
+## 速率映射
 
-| tok/s | 一整个摆动周期 | 观感 |
+客户端插件 API 不提供 token 计数（客户端事件目录仅含连接、语言、插槽、主题四类），因此速率以可感知的等价量测量：会话文本每秒新增字符数除以每 token 字符数，并经指数移动平均平滑。该指标与真实 tok/s 单调相关。
+
+| 吞吐量 | 摆动周期 | 表现 |
 | --- | --- | --- |
-| 0（等工具） | 1500 ms | 慢悠悠地晃 |
-| 9 | 750 ms | 明显在摆 |
-| 45 | 250 ms | 飞快 |
-| ≥160 | 190 ms | 拉满 |
+| 0 tok/s（等待工具） | 1500 ms | 缓慢摆动 |
+| 9 tok/s | 750 ms | 明显摆动 |
+| 45 tok/s | 250 ms | 快速摆动 |
+| ≥ 160 tok/s | 190 ms | 达到周期下限 |
 
-周期公式：`clamp(1500 / (1 + rate / 9), 190, 1500)` ms。相位是**积分**出来的（`phase += dt / period`），所以速率变化时是连续加速，不会像切 `animation-duration` 那样跳帧重启。
+周期公式：`clamp(1500 / (1 + rate / 9), 190, 1500)` ms。
 
-## 幅度：用素材原生的，不放大
+## 运动规格
 
-下面的数字由**独立验证器**在交付的帧带上重算（显示像素 = 16px 画框 ÷ 305px 裁剪边长）：
+以下数据由独立验证器在交付的帧带上重算，长度单位为 CSS 显示像素（16 px 画框 ÷ 305 px 裁剪边长）：
 
-| 实测 | 数值 |
+| 指标 | 数值 |
 | --- | --- |
-| 尾鳍质心摆动跨度 | **3.20 px**（欧氏跨度 3.28 px） |
-| 尾鳍单帧最大步进 / 绕一圈累计行程 | **0.63 px** / **6.83 px** |
-| 根部（尾柄带）跨度 / 单帧最大步进 | **0.045 px** / **0.014 px** |
-| 24 格在 32px 光栅下互异 | **24 / 24**（最小汉明距离 152） |
-| 格子四边残留墨量 | **0**（24/24 格全为 0；裁剪留边 12 源像素） |
+| 尾鳍质心摆动跨度 | 3.20 px（欧氏跨度 3.28 px） |
+| 尾鳍单帧最大步进 | 0.63 px |
+| 尾鳍单周期累计行程 | 6.83 px |
+| 根部（尾柄带）跨度 / 单帧步进 | 0.045 px / 0.014 px |
+| 帧序列互异度 | 24 / 24（最小汉明距离 152） |
+| 帧格四边残留覆盖 | 0（24 / 24） |
+| 裁剪安全留边 | ≥ 12 源像素 |
+| 笔画显示宽度 | 0.885 px（出厂图标 0.875 px） |
 
-单帧最大步进只有 0.63px —— **每一步都落在一个像素以内**：帧是逐格硬切的，看上去却是连续的。根部那 0.045px 的微动是**素材自带的**：我们没做任何配准、冻结或"钉死"处理，也没有放大或缩小摆幅（独立复核：帧带与素材原始运动的比例 1.0117 ~ 1.0176，全部落在 ±15% 内）。插件只负责换帧——画成什么样，就是素材原本的样子。
+单帧最大步进为 0.63 px，即每帧位移均落在一个像素以内，逐格切换在视觉上呈现为连续运动。根部 0.045 px 的跨度源自帧序列自身的原始运动；构建期未做配准、冻结或幅度归一化（帧带与源素材的运动比值为 1.0117 ~ 1.0176，处于 ±15% 容差内）。
 
 ## 安装
 
 ```powershell
-# 在 DSH profile 目录里
 pnpm add link:D:/dsh-plugins/dsh-icon
 ```
 
-然后在 `cordis.yml` 的 loader 里加一条 `include:dsh-whale-sway`，刷新页面（或重启 DSH）即可。插件包内已带 `cordis.patch.yml`，正常安装不需要手动改配置。
+在 `cordis.yml` 的 loader 段加入 `include:dsh-whale-sway`，随后刷新页面或重启 DSH 即可生效。包内已含 `cordis.patch.yml`，标准安装无需手工修改配置。
 
-## 调参
+## 配置
 
 `client.js` 顶部的 `TUNING`：
 
-| 键 | 含义 | 默认 |
+| 键 | 含义 | 默认值 |
 | --- | --- | --- |
-| `minPeriodMs` | 满速时一个周期 | `190` |
-| `maxPeriodMs` | 空闲时一个周期 | `1500` |
+| `minPeriodMs` | 周期下限（满速） | `190` |
+| `maxPeriodMs` | 周期上限（空闲） | `1500` |
 | `rateRef` | 使周期减半的 tok/s | `9` |
-| `charsPerToken` | 每 token 字符数（中文 1.7，英文可调到 4） | `1.7` |
+| `charsPerToken` | 每 token 字符数（中文 1.7，英文约 4） | `1.7` |
 | `sampleMs` | 采样窗口 | `200` |
 | `smooth` | EMA 权重 | `0.4` |
 
-摆幅**没有**旋钮：它就是素材里那 24 帧的幅度。想改幅度，改素材。
+摆幅不提供运行时参数：其数值即帧序列的原始幅度。
 
-## 安全阀
+## 兼容性与降级
 
-- `@media (prefers-reduced-motion: no-preference)` —— 开了减少动效的用户保持原版静止图标。
-- `@supports (mask-mode: alpha) and (mask-image: url(""))` —— 不支持 CSS mask 的浏览器保持原版渲染，不会变成一个实心方块。
-- `FRAME_SHEET_BASE64` 为空（构建产物没拼进来）时**什么都不注入**，原版图标原样保留。
-- JS 侧还有 `forced-colors: active` 门控与全程 `try/catch`：任何一步失败都退回原版，绝不打断对话流。
+- `@media (prefers-reduced-motion: no-preference)` —— 启用「减少动效」的环境保持出厂静止图标。
+- `@supports (mask-mode: alpha) and (mask-image: url(""))` —— 不支持 CSS 遮罩的浏览器保持出厂渲染，不会出现实心色块。
+- 帧带未内联时（构建产物缺失）不注入任何规则，出厂图标原样保留。
+- 运行时另设 `forced-colors: active` 限流；全流程 `try/catch`，任一异常均回退出厂渲染。
 
-## 复现与验证
+## 构建与复现
+
+帧带由构建期生成，输入为随仓库提供的帧序列素材 `preview/2C42C558D17C2745D1D47ED3DE000BD2.gif`（GIF89a，360×360，24 帧，20 ms/帧，白色背景，墨色 `#345ebb`）。
 
 ```powershell
-node tools/build-frames.mjs      # 素材 GIF -> preview/frames-sheet.png + tools/generated/frames.json
-node tools/sync-sheet.mjs        # 把帧带内联进 client.js（幂等）
-node tools/test-motion.mjs       # 离线测试：纯数学、样式表、VM 里的换帧循环
-node tools/verify-frames.mjs     # 独立复核：帧带确实来自素材、白底确实去掉、没有裁切
-node tools/verify-motion.mjs     # 独立复核：运行时零 transform、只写整数帧号
-node tools/make-gif.mjs          # 重新生成 README 这张动图（逐像素回读校验）
+node tools/build-frames.mjs      # 素材 -> preview/frames-sheet.png + tools/generated/frames.json
+node tools/sync-sheet.mjs        # 将帧带内联至 client.js（幂等；--check 供 CI 使用）
+node tools/test-motion.mjs       # 离线测试：运动数学、样式表、VM 内的换帧循环
+node tools/verify-frames.mjs     # 独立复核：帧带来源、背景剔除、裁剪与幅度
+node tools/verify-motion.mjs     # 独立复核：零变换、整数帧号、速率缩放
+node tools/make-gif.mjs          # 重新生成预览动图（逐像素回读校验）
+node tools/engine-shot.mjs       # 真实渲染引擎截图
 ```
 
-真实的引擎截图：[快流](preview/engine-fast.png) · [慢流](preview/engine-slow.png)。
+构建为确定性过程：重复执行产出逐字节一致，CI 通过重新生成并比对持续校验。真实引擎截图：[高速输出](preview/engine-fast.png) · [空闲等待](preview/engine-slow.png)。
 
-## 和其他鲸鱼插件的区别
+## 质量验证
 
-- `dsh-whale-animation` / `dsh-whale-pet` 等是**装饰性**的常驻动画。
-- 这个是**遥测驱动**的：摆动速度是当前会话 tok/s 的函数，空闲就慢下来，吐字越快摆得越快。
-- 而且摆动方式是**逐帧画面组合**，不是把一张矢量图整体 `rotate`。
+| 检查 | 结果 |
+| --- | --- |
+| 离线测试 `tools/test-motion.mjs` | 21 / 21 通过 |
+| 帧序列独立验证 `tools/verify-frames.mjs` | 8 / 8 通过（确定性检查 9 / 9） |
+| 运行时独立验证 `tools/verify-motion.mjs` | 7 / 7 通过 |
+| 持续集成（ubuntu，Node 20） | 全部通过 |
+
+两个独立验证器均自带解码与重采样实现，并通过注入缺陷（变换声明、小数帧号、属性未清理、空帧带、错序帧、白底板、过小裁剪、错误素材路径与摘要）确认其检查确实会失败。
+
+## 与其他鲸鱼插件的区别
+
+- `dsh-whale-animation`、`dsh-whale-pet` 等为装饰性常驻动画。
+- 本插件为遥测驱动：摆动速度是当前会话吞吐量的函数。
+- 运动方式为帧序列组合，而非对单一矢量图形整体旋转。
 
 ## License
 
