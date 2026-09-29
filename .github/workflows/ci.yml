@@ -20,6 +20,10 @@
 #   6. `tools/make-gif.mjs` rebuilds the README GIFs from the sheet's own cells and
 #      checks them with a pixel-exact round trip. It must stay browser-free; the
 #      real-engine screenshots live in `tools/engine-shot.mjs`, which CI skips.
+#   7. `tools/check-pack.mjs` runs the real `npm pack` and proves the published
+#      tarball is the six runtime files and nothing else: the toolchain and the
+#      source artwork stay in the repository, which the plugin never reads at run
+#      time because `client.js` inlines its own sheet.
 name: ci
 
 on:
@@ -58,3 +62,6 @@ jobs:
 
       - name: the README previews regenerate
         run: node tools/make-gif.mjs
+
+      - name: the published tarball carries the plugin and nothing else
+        run: node tools/check-pack.mjs

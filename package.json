@@ -27,9 +27,7 @@
     "client.js",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE",
-    "preview",
-    "tools"
+    "LICENSE"
   ],
   "license": "MIT",
   "author": "asdnmy123",

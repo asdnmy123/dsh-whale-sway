@@ -10,7 +10,7 @@
 
 | 高速输出（约 47 tok/s） | 空闲等待（约 7 tok/s） |
 | --- | --- |
-| ![高速输出](preview/sway-fast.gif) | ![空闲等待](preview/sway-slow.gif) |
+| ![高速输出](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/sway-fast.gif) | ![空闲等待](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/sway-slow.gif) |
 
 ## 概述
 
@@ -117,9 +117,12 @@ node tools/verify-frames.mjs     # 独立复核：帧带来源、背景剔除、
 node tools/verify-motion.mjs     # 独立复核：零变换、整数帧号、速率缩放
 node tools/make-gif.mjs          # 重新生成预览动图（逐像素回读校验）
 node tools/engine-shot.mjs       # 真实渲染引擎截图
+node tools/check-pack.mjs        # 校验发布包只含运行时文件（执行真实 npm pack）
 ```
 
-构建为确定性过程：重复执行产出逐字节一致，CI 通过重新生成并比对持续校验。真实引擎截图：[高速输出](preview/engine-fast.png) · [空闲等待](preview/engine-slow.png)。
+构建为确定性过程：重复执行产出逐字节一致，CI 通过重新生成并比对持续校验。真实引擎截图：[高速输出](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/engine-fast.png) · [空闲等待](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/engine-slow.png)。
+
+**发布包边界**：npm 包只含运行时文件（`index.js`、`client.js`、`cordis.patch.yml`、`README.md`、`LICENSE`）；`tools/`（构建与验证脚本）与 `preview/`（素材与预览图）仅存在于仓库，由 CI 使用，不进入发布包。`client.js` 已内联帧带与样式表，运行时不读取仓库内任何文件。
 
 ## 质量验证
 
@@ -128,6 +131,7 @@ node tools/engine-shot.mjs       # 真实渲染引擎截图
 | 离线测试 `tools/test-motion.mjs` | 21 / 21 通过 |
 | 帧序列独立验证 `tools/verify-frames.mjs` | 8 / 8 通过（确定性检查 9 / 9） |
 | 运行时独立验证 `tools/verify-motion.mjs` | 7 / 7 通过 |
+| 发布包边界 `tools/check-pack.mjs` | 通过（真实 `npm pack`：仅 6 个运行时文件） |
 | 持续集成（ubuntu，Node 20） | 全部通过 |
 
 两个独立验证器均自带解码与重采样实现，并通过注入缺陷（变换声明、小数帧号、属性未清理、空帧带、错序帧、白底板、过小裁剪、错误素材路径与摘要）确认其检查确实会失败。

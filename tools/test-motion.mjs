@@ -494,12 +494,16 @@ test('the host half declares the plugin without a runtime dependency', () => {
   equal(typeof host.apply, 'function', 'host apply must exist');
 });
 
-test('package.json ships the sheet and both halves', () => {
+test('package.json ships both halves and keeps the toolchain out of the tarball', () => {
   const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8'));
   equal(pkg.name, 'dsh-whale-sway', 'package name');
   assert(/^0\.2\./.test(pkg.version), 'the frame-stepping rewrite is a 0.2.x release, got ' + pkg.version);
   assert(pkg.files.indexOf('client.js') !== -1, 'client.js must ship');
-  assert(pkg.files.indexOf('tools') !== -1, 'the tools must ship so the sheet can be regenerated');
+  assert(pkg.files.indexOf('index.js') !== -1, 'index.js must ship');
+  assert(pkg.files.indexOf('cordis.patch.yml') !== -1, 'cordis.patch.yml must ship');
+  assert(pkg.files.indexOf('LICENSE') !== -1, 'LICENSE must ship');
+  assert(pkg.files.indexOf('tools') === -1, 'the toolchain stays in the repository, not in the tarball');
+  assert(pkg.files.indexOf('preview') === -1, 'the source artwork stays in the repository, not in the tarball');
   assert(pkg.exports['./client'] !== undefined, 'the client entry must exist');
   equal(pkg.dsh.client.platform, 'web', 'the client half targets the web platform');
 });
