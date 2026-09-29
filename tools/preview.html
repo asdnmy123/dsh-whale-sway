@@ -2,143 +2,326 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>dsh-whale-sway · real-engine preview</title>
+<title>dsh-whale-sway · frame stepping inspector</title>
 <style>
   html, body { margin: 0; padding: 0; background: #f6f7fa; }
-  body { font: 14px/22px "Segoe UI", system-ui, sans-serif; padding: 24px 32px; }
+  body { padding: 20px 24px 40px; color: #333; font: 13px/19px ui-monospace, Consolas, "Courier New", monospace; }
+  h1 { margin: 0 0 6px; font: 600 15px/22px "Segoe UI", system-ui, sans-serif; }
+  p.note { margin: 0 0 18px; max-width: 78ch; color: #666; font: 12px/18px "Segoe UI", system-ui, sans-serif; }
+
   /* --- the shipped running row, reduced to what the override touches --- */
   .conversation { color: #4d6bfe; }
-  .row { display: flex; flex-direction: column; align-items: flex-start; }
-  .runningContent { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-  /* the shipped icon box: 14px, contain:strict, overflow:hidden — our CSS relaxes it */
-  .h_runningIcon { width: 14px; height: 14px; contain: strict; flex: none; display: inline-flex; position: relative; overflow: hidden; }
-  /* stands in for the shipped APNG mask: if our override works, this must vanish */
+  #stream { display: none; }
+  /* the shipped icon box: 14px, contain:strict, overflow:hidden — the override relaxes it */
+  .h_runningIcon { width: 14px; height: 14px; contain: strict; display: block; position: relative; overflow: hidden; }
+  /* stands in for the shipped APNG mask and the shipped still fallback */
   .h_runningWhaleAnimated { display: block; position: absolute; inset: 0; background: currentColor; opacity: .3; }
   .h_runningWhaleStill { display: initial; width: 100%; height: 100%; }
-  /* magnifier: 10x so a 14px icon is legible in a screenshot */
-  .magnify { transform: scale(10); transform-origin: 0 0; }
-  .pad { height: 110px; }
-  .pad-after { height: 190px; }
-  #caption { color: #333; font: 13px/20px ui-monospace, Consolas, monospace; margin: 0; white-space: pre; }
-  #warn { color: #c0392b; font: 13px/20px ui-monospace, Consolas, monospace; margin: 0; }
+  .iconCell { position: relative; display: block; width: 14px; height: 14px; }
+
+  /* the inspector's viewer zoom is pure layout: the same box at 10x (14px -> 140px),
+     so the engine's own proportional declarations scale with it */
+  .magBox { position: relative; width: 160px; height: 160px; margin: 0 auto; }
+  .mag { position: absolute; left: 10px; top: 10px; }
+  .mag .iconCell, .mag .h_runningIcon { width: 140px; height: 140px; }
+  /* the shipped 14px slot boundary at the same zoom, so a fluke that leaves it is visible */
+  .slotMark { position: absolute; left: 10px; top: 10px; width: 140px; height: 140px; outline: 1px dashed rgba(192, 57, 43, .75); }
+
+  #controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 22px 0 14px; }
+  #controls button { font: 12px/16px "Segoe UI", system-ui, sans-serif; padding: 4px 10px; }
+  #controls label { font: 12px/16px "Segoe UI", system-ui, sans-serif; }
+  #cps { vertical-align: middle; }
+  #readout { margin: 0 0 16px; padding: 10px 12px; background: #fff; border: 1px solid #e2e5ec; border-radius: 6px; white-space: pre-wrap; }
+  #warn { margin: 0 0 16px; color: #c0392b; white-space: pre-wrap; }
+  .filmWrap { color: #4d6bfe; }
+  .filmLabel { color: #666; font: 12px/18px "Segoe UI", system-ui, sans-serif; }
+  #film { display: grid; grid-template-columns: repeat(12, 28px); gap: 6px; margin-top: 8px; }
+  .filmCell { position: relative; width: 28px; height: 28px; }
+  /* each film cell is the same 14px box at 2x, again by layout */
+  .filmCell .iconCell, .filmCell .h_runningIcon { width: 28px; height: 28px; }
 </style>
 </head>
 <body>
-<div class="conversation" data-conversation-scroll>
-  <div class="pad"></div>
-  <div class="magnify">
-    <div class="row" data-chat-running>
-      <span class="runningContent">
-        <span class="h_runningIcon">
-          <span class="h_runningWhaleAnimated"></span>
-          <svg class="h_runningWhaleStill" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8.844 13.742C8.967 12.328 8.45 10.4 8.45 9.65C8.45 8.94 8.88 8.43 9.6 8.43C11.285 8.43 12.106 8.281 12.685 8.104C13.71 7.791 14.585 6.768 15.055 5.945C15.137 5.803 14.99 5.641 14.829 5.671C13.829 5.86 12.828 5.376 11.827 4.978C10.659 4.514 9.491 4.707 8.935 4.876C8.805 4.915 8.658 4.819 8.636 4.686C8.468 3.643 7.405 2.615 5.498 2.238C4.54 2.048 3.748 1.574 3.347 1.202C3.252 1.113 3.088 1.125 3.03 1.242C2.628 2.059 2.168 3.82 5.248 6.115C5.82 6.494 6.31 6.785 6.574 7.637C6.72 8.104 6.157 9.168 6.061 9.368C5.157 11.27 5.089 12.19 4.926 13.742" stroke="currentColor" stroke-width="1"></path>
-          </svg>
-        </span>
-        <span class="runningText">深度求索中，用时 1秒 ···</span>
-      </span>
-    </div>
-  </div>
-  <div class="pad-after"></div>
-</div>
-<p id="caption">booting…</p>
-<p id="warn"></p>
+<h1>dsh-whale-sway · frame stepping inspector</h1>
+<p class="note">
+  This page boots the real <code>client.js</code> beside it through the same
+  <code>window.__ModuleLoader__.load</code> handshake a DSH web client uses. The engine's only
+  motion output is the integer <code>--dsh-whale-frame</code> custom property; the frame sheet
+  inlined in <code>client.js</code> is applied as the icon's <code>::after</code> mask and moved
+  one whole cell at a time by <code>mask-position</code>. The slider changes how fast characters
+  are appended to the transcript, which is the engine's only rate input.
+</p>
 
+<div class="conversation" data-conversation-scroll>
+  <div id="stream"></div>
+  <div class="magBox">
+    <div class="mag">
+      <div class="row" data-chat-running>
+        <span class="iconCell">
+          <span class="h_runningIcon">
+            <span class="h_runningWhaleAnimated"></span>
+            <svg class="h_runningWhaleStill" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="" stroke="currentColor" stroke-width="1"></path></svg>
+          </span>
+        </span>
+      </div>
+    </div>
+    <span class="slotMark"></span>
+  </div>
+</div>
+
+<div id="controls">
+  <button id="toggle" type="button">pause</button>
+  <button id="step" type="button">step one frame</button>
+  <button id="cycle" type="button">step one cycle</button>
+  <button id="restart" type="button">restart engine</button>
+  <label>chars/s <input id="cps" type="range" min="0" max="400" step="5" value="80"> <span id="cpsValue">80</span></label>
+</div>
+
+<pre id="readout">booting…</pre>
+<pre id="warn"></pre>
+
+<div class="filmWrap" data-chat-running>
+  <div class="filmLabel" id="filmLabel">one full cycle</div>
+  <div id="film"></div>
+</div>
+
+<script>
+  // The real loader handshake: client.js calls this at parse time.
+  window.__loaderCalls = [];
+  window.__ModuleLoader__ = {
+    load: function (definition) {
+      window.__loaderCalls.push({ id: definition.id, factory: typeof definition.factory });
+      window.__module = definition.factory();
+    }
+  };
+</script>
 <script src="../client.js"></script>
 <script>
-  // ---------------------------------------------------------------------
-  // Deterministic clock: rAF is queued instead of scheduled, so the harness
-  // can advance the real driver by an exact number of virtual milliseconds.
-  // ---------------------------------------------------------------------
-  var pending = [];
-  var nextId = 1;
-  var clock = 0;
-  window.requestAnimationFrame = function (callback) { pending.push(callback); return nextId++; };
-  window.cancelAnimationFrame = function () {};
+(function () {
+  'use strict';
 
-  function pump(milliseconds, step) {
-    var target = clock + milliseconds;
-    var dt = step || 16.7;
-    var guard = 0;
-    while (clock < target && guard < 10000) {
-      clock += dt;
-      var batch = pending;
-      pending = [];
-      for (var i = 0; i < batch.length; i += 1) batch[i](clock);
-      guard += 1;
-    }
-  }
-
-  var api = window.__dshIconApi;
-  var caption = document.getElementById('caption');
+  var FRAME_VAR = '--dsh-whale-frame';
+  /** Clock step: 120 Hz, small enough that no frame index is stepped over. */
+  var STEP_MS = 1000 / 120;
+  var nativeRaf = window.requestAnimationFrame.bind(window);
+  var readout = document.getElementById('readout');
   var warn = document.getElementById('warn');
+  var stream = document.getElementById('stream');
+  var box = document.querySelector('[data-chat-running] [class*="_runningIcon"]');
+  var api = window.__dshIconApi;
+
+  // ---------------------------------------------------------------------
+  // Deterministic clock: rAF and setInterval are queued instead of scheduled,
+  // so the engine advances by an exact number of virtual milliseconds. The
+  // page's own driver below pumps that clock from real frames.
+  // ---------------------------------------------------------------------
+  var clock = 0;
+  var rafQueue = [];
+  var intervals = [];
+  var seq = 0;
+  window.requestAnimationFrame = function (callback) { rafQueue.push(callback); seq += 1; return seq; };
+  window.cancelAnimationFrame = function () {};
+  window.setInterval = function (callback, every) {
+    seq += 1;
+    intervals.push({ id: seq, callback: callback, every: every, next: clock + every });
+    return seq;
+  };
+  window.clearInterval = function (id) {
+    var kept = [];
+    for (var i = 0; i < intervals.length; i += 1) if (intervals[i].id !== id) kept.push(intervals[i]);
+    intervals = kept;
+  };
+  performance.now = function () { return clock; };
+  window.matchMedia = function (query) {
+    return { matches: false, media: query, addEventListener: function () {}, removeEventListener: function () {} };
+  };
+
   var params = new URLSearchParams(location.search);
   var charsPerSecond = Number(params.get('cps') || 80);
+  var playing = true;
+  var dispose = null;
+  var ticks = 0;
+  var samples = 0;
+  var lastReal = 0;
 
-  if (api === undefined) {
-    warn.textContent = 'client.js did not expose globalThis.__dshIconApi';
-  } else {
-    // Exercise the real plugin entry point.
-    api.apply({ effect: function (callback) { callback(); } });
-
-    var box = document.querySelector('[class*="_runningIcon"]');
-    var animated = document.querySelector('[class*="_runningWhaleAnimated"]');
-    var still = document.querySelector('[class*="_runningWhaleStill"]');
-    var after = getComputedStyle(box, '::after');
-
-    // Simulate the token stream: grow text inside the measured container.
-    var scroll = document.querySelector('[data-conversation-scroll]');
-    var stream = document.createElement('div');
-    scroll.insertBefore(stream, scroll.firstChild);
-    var characters = 0;
-    setInterval(function () {
-      characters += Math.round(charsPerSecond / 10);
-      stream.textContent = 'x'.repeat(characters);
-    }, 100);
-
-    var tokensPerSecond = charsPerSecond / api.TUNING.charsPerToken;
-    var period = api.periodForRate(tokensPerSecond);
-    var amplitude = api.amplitudeForRate(tokensPerSecond);
-    var observed = { min: 0, max: 0 };
-    var frames = 0;
-
-    function readVar(name) {
-      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    }
-
-    function report(frozen) {
-      caption.textContent =
-        'simulated ' + charsPerSecond + ' chars/s  =  ' + tokensPerSecond.toFixed(1) + ' tok/s\n' +
-        'period ' + period.toFixed(0) + ' ms   amplitude +/-' + amplitude.toFixed(1) + ' deg\n' +
-        'driver frames pumped: ' + frames + '\n' +
-        'live --dsh-whale-angle: ' + (readVar('--dsh-whale-angle') || '(unset)') +
-        '   --dsh-whale-lift: ' + (readVar('--dsh-whale-lift') || '(unset)') + '\n' +
-        'observed angle range: ' + observed.min.toFixed(2) + ' .. ' + observed.max.toFixed(2) + ' deg\n' +
-        'shipped APNG layer: display=' + getComputedStyle(animated).display +
-        '   shipped still SVG: display=' + getComputedStyle(still).display + '\n' +
-        'our ::after mask: ' + (after.maskImage || after.webkitMaskImage || '(none)').slice(0, 34) + '…\n' +
-        (frozen === true ? 'FROZEN at quarter cycle (peak swing)' : 'settling…');
-    }
-
-    // Let the real rate meter converge over virtual time, then advance the real
-    // driver to the quarter-cycle peak and stop, so the screenshot is definite.
-    setTimeout(function () {
-      var pumps = 0;
-      var step = 8;
-      while (clock < period * 0.25 && pumps < 400) {
-        pump(step, step);
-        pumps += 1;
-        var angle = parseFloat(readVar('--dsh-whale-angle')) || 0;
-        frames += 1;
-        observed.min = Math.min(observed.min, angle);
-        observed.max = Math.max(observed.max, angle);
-      }
-      report(true);
-    }, 1600);
-
-    setInterval(function () { if (frames === 0) report(false); }, 200);
-    report(false);
+  function frameValue() {
+    return document.documentElement.style.getPropertyValue(FRAME_VAR).trim();
   }
+
+  function measuredRate() {
+    var seconds = clock / 1000;
+    return seconds > 0 ? stream.textContent.length / seconds / api.TUNING.charsPerToken : 0;
+  }
+
+  /** Append transcript characters at the requested character rate. */
+  function grow() {
+    var characters = Math.round(charsPerSecond * clock / 1000);
+    stream.textContent = characters <= 0 ? '' : new Array(characters + 1).join('x');
+  }
+
+  /** Advance the engine by exactly `milliseconds` of virtual time. */
+  function pump(milliseconds) {
+    var target = clock + milliseconds;
+    var guard = 0;
+    while (clock < target && guard < 20000) {
+      guard += 1;
+      clock += Math.min(STEP_MS, target - clock);
+      grow();
+      for (var i = 0; i < intervals.length; i += 1) {
+        var item = intervals[i];
+        while (clock >= item.next - 1e-9) {
+          item.next += item.every;
+          item.callback(clock);
+          samples += 1;
+        }
+      }
+      var batch = rafQueue;
+      rafQueue = [];
+      for (var j = 0; j < batch.length; j += 1) {
+        batch[j](clock);
+        ticks += 1;
+      }
+    }
+  }
+
+  function boot() {
+    api.apply({
+      effect: function (callback) {
+        var result = callback();
+        if (typeof result === 'function') dispose = result;
+      }
+    });
+  }
+
+  function restart() {
+    if (typeof dispose === 'function') dispose();
+    dispose = null;
+    clock = 0;
+    ticks = 0;
+    samples = 0;
+    rafQueue = [];
+    intervals = [];
+    grow();
+    boot();
+  }
+
+  /** One cell per sheet frame, each pinned through the engine's own CSS. */
+  function buildFilm() {
+    var film = document.getElementById('film');
+    film.textContent = '';
+    var count = api.FRAME_COUNT;
+    for (var index = 0; index < count; index += 1) {
+      var cell = document.createElement('span');
+      cell.className = 'filmCell';
+      var icon = document.createElement('span');
+      icon.className = 'iconCell';
+      var iconBox = document.createElement('span');
+      iconBox.className = 'h_runningIcon';
+      iconBox.style.setProperty(FRAME_VAR, String(index));
+      var shipped = document.createElement('span');
+      shipped.className = 'h_runningWhaleAnimated';
+      iconBox.appendChild(shipped);
+      icon.appendChild(iconBox);
+      cell.appendChild(icon);
+      film.appendChild(cell);
+    }
+    document.getElementById('filmLabel').textContent =
+      'one full cycle · all ' + count + ' cells of the spliced sheet, each one pinned to its own ' + FRAME_VAR;
+  }
+
+  function render() {
+    if (api === undefined || api === null) return;
+    var count = api.FRAME_COUNT;
+    var frame = frameValue();
+    var after = getComputedStyle(box, '::after');
+    var style = document.querySelector('style[data-plugin-css]');
+    var css = style === null ? '' : style.textContent;
+    var still = box.querySelector('[class*="_runningWhaleStill"]');
+    var lines = [
+      'module          ' + (window.__loaderCalls[0] === undefined ? 'not loaded' : 'id=' + window.__loaderCalls[0].id) +
+        '   apply=' + typeof api.apply + '   inject=' + JSON.stringify(api.inject || []),
+      'sheet           hasSheet=' + api.hasSheet() + '   frames=' + count,
+      'virtual clock   ' + clock.toFixed(1) + ' ms   pumped engine frames=' + ticks +
+        '   rate samples=' + samples + '   ' + (playing ? 'playing' : 'paused'),
+      'transcript      ' + stream.textContent.length + ' chars at ' + charsPerSecond + ' chars/s  ->  ' +
+        measuredRate().toFixed(2) + ' tok/s',
+      'cycle           ' + api.periodForRate(measuredRate(), api.TUNING).toFixed(1) + ' ms   ' +
+        FRAME_VAR + ' = ' + (frame === '' ? '(unset)' : frame) + ' of ' + count,
+      'mask            size=' + (after.maskSize || after.webkitMaskSize) +
+        '   position=' + (after.maskPosition || after.webkitMaskPosition),
+      '::after         content=' + after.content + '   mask-mode=' + (after.maskMode || after.webkitMaskMode || '(unset)'),
+      'shipped layers  animated=' + getComputedStyle(box.firstElementChild).display +
+        '   still=' + (still === null ? '(missing)' : getComputedStyle(still).display),
+      'stylesheet      ' + (style === null ? 'not injected' : css.length + ' chars, tag=' + style.getAttribute('data-plugin-css')) +
+        '   gates: prefers-reduced-motion=' + /prefers-reduced-motion/.test(css) +
+        ' @supports=' + /@supports/.test(css)
+    ];
+    readout.textContent = lines.join('\n');
+  }
+
+  function realLoop(timestamp) {
+    var delta = lastReal === 0 ? 16.7 : Math.min(50, timestamp - lastReal);
+    lastReal = timestamp;
+    if (playing) pump(delta);
+    render();
+    nativeRaf(realLoop);
+  }
+
+  document.getElementById('toggle').addEventListener('click', function () {
+    playing = !playing;
+    this.textContent = playing ? 'pause' : 'play';
+  });
+  document.getElementById('step').addEventListener('click', function () {
+    playing = false;
+    document.getElementById('toggle').textContent = 'play';
+    pump(1000 / 60);
+    render();
+  });
+  document.getElementById('cycle').addEventListener('click', function () {
+    playing = false;
+    document.getElementById('toggle').textContent = 'play';
+    pump(api.periodForRate(measuredRate(), api.TUNING));
+    render();
+  });
+  document.getElementById('restart').addEventListener('click', function () {
+    restart();
+    render();
+  });
+  var slider = document.getElementById('cps');
+  slider.value = String(charsPerSecond);
+  document.getElementById('cpsValue').textContent = String(charsPerSecond);
+  slider.addEventListener('input', function () {
+    charsPerSecond = Number(slider.value);
+    document.getElementById('cpsValue').textContent = slider.value;
+  });
+
+  if (api === undefined || api === null || typeof api.apply !== 'function') {
+    warn.textContent =
+      'client.js did not run in this page: window.__dshIconApi is undefined. Open the page from a ' +
+      'checkout so ../client.js resolves, or serve the folder over http.';
+  } else {
+    var paths = document.querySelectorAll('.h_runningWhaleStill path');
+    for (var p = 0; p < paths.length; p += 1) paths[p].setAttribute('d', api.REST_PATH);
+    if (window.__loaderCalls.length !== 1) {
+      warn.textContent = 'the loader handshake saw ' + window.__loaderCalls.length + ' module loads, expected exactly 1.';
+    }
+    if (api.hasSheet() !== true) {
+      warn.textContent =
+        'this build carries no spliced frame sheet, so client.js injects nothing and the shipped ' +
+        'indicator stays exactly as shipped (that fallback is intended). Run ' +
+        '"node tools/build-frames.mjs && node tools/sync-sheet.mjs" to splice one.';
+    }
+    grow();
+    boot();
+    buildFilm();
+    // `?pump=3000` advances the deterministic clock in one shot, so this page can
+    // be snapshotted or asserted without waiting on real time.
+    var prePump = Number(params.get('pump') || 0);
+    if (isFinite(prePump) && prePump > 0) pump(prePump);
+    render();
+    nativeRaf(realLoop);
+  }
+})();
 </script>
 </body>
 </html>

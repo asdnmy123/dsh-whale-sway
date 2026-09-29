@@ -1,7 +1,7 @@
 {
   "name": "dsh-whale-sway",
-  "version": "0.1.0",
-  "description": "让 DSH 运行状态行的鲸尾真正摆起来：摆幅更大，摆动速度跟随实时 tok/s。A token-rate-driven whale-tail sway for the DeepSeek Harness running indicator.",
+  "version": "0.2.0",
+  "description": "让 DSH 运行状态行的鲸尾逐帧摆起来：24 张预处理画面组合、运行时零旋转，摆动速度跟随实时 tok/s。Frame-by-frame whale-tail sway for the DeepSeek Harness running indicator, driven by the live token rate.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -9,6 +9,8 @@
     "whale",
     "whale-tail",
     "animation",
+    "frame-animation",
+    "sprite-sheet",
     "tokens-per-second",
     "running-indicator",
     "css-mask"

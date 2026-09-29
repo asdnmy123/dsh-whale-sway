@@ -1,9 +1,25 @@
-# The plugin has no build step and no dependencies, so CI is one command.
+# The plugin has no build step and no runtime dependency, so every check here is
+# one `node` command. What the chain proves, in order:
 #
-# `tools/test-motion.mjs` loads the real `client.js` through the browser module
-# loader's own handshake inside `node:vm` (which also proves the file parses),
-# exercises the pure motion maths and the stylesheet builder, runs `apply()`
-# against a stub DOM, and dynamically imports the Host half.
+#   1. `tools/build-frames.mjs` regenerates the sprite sheet and its metadata from
+#      the source artwork byte-for-byte, and `git diff --exit-code` fails the job
+#      if a single byte moved. The committed frames therefore provably come from
+#      `preview/2C42C558D17C2745D1D47ED3DE000BD2.gif`, which the repo ships.
+#   2. `tools/sync-sheet.mjs --check` proves the sheet inlined in `client.js` is
+#      that exact artifact and not a stale copy from an earlier crop.
+#   3. `tools/test-motion.mjs` loads the real `client.js` through the browser module
+#      loader's own handshake inside `node:vm` (which also proves the file parses),
+#      exercises the pure motion maths and the stylesheet builder, runs `apply()`
+#      against a stub DOM, and dynamically imports the Host half.
+#   4. `tools/verify-frames.mjs` is the adversarial half: its own GIF decoder, its
+#      own PNG reader and its own resampler, checking that the sheet really is the
+#      artwork, that the white background is gone and that nothing was clipped.
+#   5. `tools/verify-motion.mjs` proves the sway is frame selection and nothing
+#      else: no `transform` in the emitted stylesheet, only whole frame indices
+#      written at runtime, and the rate scaling strictly monotone.
+#   6. `tools/make-gif.mjs` rebuilds the README GIFs from the sheet's own cells and
+#      checks them with a pixel-exact round trip. It must stay browser-free; the
+#      real-engine screenshots live in `tools/engine-shot.mjs`, which CI skips.
 name: ci
 
 on:
@@ -19,4 +35,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: node tools/test-motion.mjs
+
+      - name: the frames are provably the artwork (regenerate, then diff)
+        run: |
+          node tools/build-frames.mjs
+          git diff --exit-code -- \
+            preview/frames-sheet.png \
+            preview/frames-contact-sheet.png \
+            tools/generated/frames.json
+
+      - name: the sheet inlined in client.js is that exact artifact
+        run: node tools/sync-sheet.mjs --check
+
+      - name: offline engine tests
+        run: node tools/test-motion.mjs
+
+      - name: verify the frames (artwork, white removal, no clipping)
+        run: node tools/verify-frames.mjs
+
+      - name: verify the motion (frame selection, zero transform)
+        run: node tools/verify-motion.mjs
+
+      - name: the README previews regenerate
+        run: node tools/make-gif.mjs

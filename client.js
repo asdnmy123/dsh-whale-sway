@@ -1,69 +1,88 @@
 /**
- * dsh-whale-sway — client half: a whale tail that actually wags, as fast as the model
- * is producing tokens.
+ * dsh-whale-sway — client half: the whale tail of the DSH running indicator
+ * sways by flipping through pre-rendered frames, as fast as the model is
+ * producing tokens.
  *
- * ## What is being changed, and what is not
+ * ## What this half does
  *
  * The DSH running indicator ("深度求索中，用时 N 秒 ···") draws a DeepSeek
- * whale-tail mark to the left of its shimmering label. Shipped, that mark is a
- * base64 APNG used as a CSS mask, so the wag timing lives *inside the image*:
- * no stylesheet can change how fast it plays, and its amplitude is fixed.
+ * whale-tail mark to the left of its shimmering label. This plugin replaces the
+ * indicator's *motion*: it hides the shipped mark and paints, in its place, the
+ * frame of a pre-rendered animation strip that the token rate selects.
  *
- * This half replaces **only the motion**. It hides the shipped mask and the
- * static SVG fallback inside the icon box, then draws the *same* geometry
- * (`REST_PATH`, the still fallback's own path data, 16x16 viewBox, stroke 1,
- * `currentColor`) as a pseudo-element mask and rotates it with a
- * requestAnimationFrame integrator. Shape, colour, size and the layout box are
- * untouched, so the icon still looks like the icon — it just swings much wider
- * and its tempo follows the live token rate.
+ * ## Why frames instead of a transform
  *
- * ## Why a JS integrator instead of CSS keyframes
+ * An earlier version of this plugin drew one vector mark and rotated it around a
+ * pivot. That is cheap, but it reads as a stiff whole-object hinge: the base
+ * sweeps with the tip, and the outline never changes shape. The user's own
+ * artwork — a hand-drawn and hand-timed 24-frame whale-tail wag — is simply
+ * better than anything a rotation of a still mark can look like.
  *
- * The sway rate has to follow the token rate continuously. With keyframes, every
- * new rate means a new `animation-duration`, and the browser restarts the
- * timeline: the tail jumps. Integrating the phase here makes a speed change
- * continuous — it accelerates instead of teleporting.
+ * So the animation here is *pictures*, not geometry: the strip is a vertical
+ * pile of square cells, each cell one finished frame of the user's artwork with
+ * the white background removed, and the loop's only job is to pick which cell is
+ * on screen. Nothing is rotated, translated, scaled or otherwise transformed at
+ * any point — there is no `transform` declaration in this module at all, and the
+ * only custom property the loop writes is an integer frame index.
+ *
+ * The measurements that justify "the root does not move, only the tail does"
+ * come from the artwork itself: mapped onto the indicator's 14px slot, the
+ * peduncle (the two little legs at the bottom) drifts 0.031 display pixels
+ * across the whole cycle while the fluke travels ±2.7 - so the base is visually
+ * planted without anything being frozen or re-registered, and the sway is
+ * natural rather than amplified.
+ *
+ * ## How the right cell gets on screen
+ *
+ * A single CSS `mask-image` points at the whole strip, sized so that exactly one
+ * cell fills the paint box, and `mask-position` slides the strip by whole cells:
+ *
+ *   mask-size: 100% <count * 100>%        (one cell wide, `count` cells tall)
+ *   mask-position: 0 <i / (count - 1) * 100>%
+ *
+ * The percentage form of `mask-position` aligns the strip's own percentage point
+ * with the box's, so those two alignments land frame `i` exactly on the box for
+ * every integer `i` — no rounding, no sub-cell drift. `i` is written by the loop
+ * as `--dsh-whale-frame`.
  *
  * ## Where the rate comes from (and its honest limitation)
  *
  * The Client API exposes no token counter to a plugin: the client event catalog
  * has only connection/locale/slot/theme events, and `ctx.sessions.binding()`
  * needs a session id this half deliberately does not want to plumb through a
- * Slot. So the rate is measured the way the user perceives it — characters
+ * Slot. So the rate is measured the way the user perceives it - characters
  * appended to the open conversation per second, divided by a
  * characters-per-token estimate. That is monotonic in real tok/s and needs no
- * shell internals, so a shell update cannot break it.
+ * shell internals, so a shell update cannot break it. It is a proxy, not a
+ * token count, and the README says so.
  *
- * ## Why nothing is clipped
+ * ## Why the paint box is a hair larger than the slot
  *
- * The icon box ships as `contain: strict; overflow: hidden` (about 14px). A
- * wider swing pushes the fluke tips ~1px outside that box, so the stylesheet
- * relaxes containment on that one element; everything else keeps its geometry.
+ * The shipped icon box is 14px with `contain: strict; overflow: hidden`. The
+ * artwork's swing needs 16px of room to keep the fluke tips from being shaved
+ * at the extremes, so the pseudo-element that paints the frames is inset
+ * outwards by 1/14 of the box and containment is relaxed on that one element.
+ * Everything else keeps its geometry.
  *
  * ## Load contract
  *
- * A DSH web client module: `window.__ModuleLoader__.load({ id, factory })`,
- * with `apply(ctx)` / `inject` on the returned module. No build step, no React,
- * no Slot registration — one stylesheet plus one animation loop.
+ * A DSH web client module: `window.__ModuleLoader__.load({ id, factory })`, with
+ * `apply(ctx)` / `inject` on the returned module. No build step, no React, no
+ * Slot registration - one stylesheet plus one animation loop.
  */
 
 (function () {
   'use strict';
 
-  /**
-   * The shipped still-fallback path from `RunningWhaleTail.js` (viewBox 0 0 16
-   * 16, `stroke="currentColor"`, `stroke-width="1"`). Kept byte-identical so the
-   * re-animated mark is geometrically the same mark.
-   */
-  var REST_PATH =
-    'M8.844 13.742C8.967 12.328 8.45 10.4 8.45 9.65C8.45 8.94 8.88 8.43 9.6 8.43' +
-    'C11.285 8.43 12.106 8.281 12.685 8.104C13.71 7.791 14.585 6.768 15.055 5.945' +
-    'C15.137 5.803 14.99 5.641 14.829 5.671C13.829 5.86 12.828 5.376 11.827 4.978' +
-    'C10.659 4.514 9.491 4.707 8.935 4.876C8.805 4.915 8.658 4.819 8.636 4.686' +
-    'C8.468 3.643 7.405 2.615 5.498 2.238C4.54 2.048 3.748 1.574 3.347 1.202' +
-    'C3.252 1.113 3.088 1.125 3.03 1.242C2.628 2.059 2.168 3.82 5.248 6.115' +
-    'C5.82 6.494 6.31 6.785 6.574 7.637C6.72 8.104 6.157 9.168 6.061 9.368' +
-    'C5.157 11.27 5.089 12.19 4.926 13.742';
+  /* dsh-whale-sway:sheet:begin */
+  // Generated by `node tools/sync-sheet.mjs` from tools/generated/frames.json.
+  // Do not edit by hand: `node tools/build-frames.mjs` regenerates the sheet
+  // from the source artwork and the sync tool fills these four values in.
+  var FRAME_SHEET_BASE64 = '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';
+  var FRAME_COUNT = 24;
+  var FRAME_CELL = 32;
+  var FRAME_SOURCE = "preview/2C42C558D17C2745D1D47ED3DE000BD2.gif";
+  /* dsh-whale-sway:sheet:end */
 
   /** Stylesheet identity, tagged like every shipped client bundle stylesheet. */
   var CSS_TAG = 'dsh-whale-sway/WhaleSway.css';
@@ -76,18 +95,19 @@
    * build, the suffix does not, so the override keys on the substring.
    */
   var ICON_SELECTOR = '[' + RUNNING_ATTR + '] [class*="_runningIcon"]';
+  /** The custom property the loop writes; a whole number, never a length. */
+  var FRAME_VAR = '--dsh-whale-frame';
+  /** How much wider than the shipped slot the frame cell needs to be, 1/14. */
+  var BOX_GROWTH = 14;
 
   /**
    * Motion tuning. Every number here is a taste decision, not a contract; the
    * README documents how to edit and reload them.
+   *
+   * There is deliberately no amplitude knob: the sway's width is whatever the
+   * artwork's frames contain, and this plugin does not amplify it.
    */
   var TUNING = {
-    /** Swing half-range at idle, in degrees. The shipped APNG moves a few degrees. */
-    amplitudeDeg: 15,
-    /** Extra half-range earned at `ampFullRate` — 15deg idle, 23deg flat out. */
-    amplitudeGainDeg: 8,
-    /** tok/s at which the full amplitude gain is reached. */
-    ampFullRate: 45,
     /** Fastest full cycle (peak token rate). */
     minPeriodMs: 190,
     /** Slowest full cycle (idle, or waiting on a tool call). */
@@ -102,10 +122,6 @@
     sampleMs: 200,
     /** EMA weight applied to each fresh measurement (0..1). */
     smooth: 0.4,
-    /** Vertical bob half-range in px — the tell that sells a wag; 0 disables. */
-    liftPx: 0.6,
-    /** Root of the tail stock inside the 16x16 box: (6.89, 13.76) => 43% 86%. */
-    pivot: '43% 86%',
   };
 
   // ---------------------------------------------------------------------
@@ -136,28 +152,27 @@
   }
 
   /**
-   * Swing half-range for a token rate: the busier the model, the wider the tail.
+   * The cell that belongs on screen for a cycle position.
    *
-   * Linear in rate up to `ampFullRate`, then flat — enough to read as "excited"
-   * without letting the fluke tips wander far outside the icon box.
+   * The position is a phase in turns: `phase = 1` is one completed sway. Framing
+   * it to a whole cell is the entire animation - the result is only ever an
+   * integer index, so no caller can smuggle a fractional (and therefore
+   * interpolated or transformed) pose into the render.
    *
-   * @param rate - tokens per second.
-   * @param tuning - optional tuning override.
-   * @returns the half-range in degrees.
+   * @param phase - cycle position in turns (any finite number).
+   * @param count - number of cells in the strip.
+   * @returns an integer in `[0, count - 1]`.
    */
-  function amplitudeForRate(rate, tuning) {
-    var t = tuning || TUNING;
-    var r = clamp(rate, 0, t.maxRate);
-    var share = t.ampFullRate <= 0 ? 1 : Math.min(1, r / t.ampFullRate);
-    return clamp(t.amplitudeDeg + t.amplitudeGainDeg * share, 0, 60);
-  }
-
-  /** Vertical bob half-range for a token rate, in px. */
-  function liftForRate(rate, tuning) {
-    var t = tuning || TUNING;
-    var r = clamp(rate, 0, t.maxRate);
-    var share = t.ampFullRate <= 0 ? 1 : Math.min(1, r / t.ampFullRate);
-    return clamp(t.liftPx * (0.35 + 0.65 * share), 0, 8);
+  function frameIndexForPhase(phase, count) {
+    var n = Math.floor(Number(count));
+    if (!isFinite(n) || n < 1) return 0;
+    var p = Number(phase);
+    if (!isFinite(p)) p = 0;
+    var turns = p - Math.floor(p);
+    var index = Math.floor(turns * n);
+    // `turns` is in [0, 1) so `index` is in [0, n); the modulo only guards a
+    // rounding that could land exactly on n.
+    return index >= n ? n - 1 : index < 0 ? 0 : index;
   }
 
   /**
@@ -223,54 +238,80 @@
   // Stylesheet
   // ---------------------------------------------------------------------
 
-  /** The mask must be the shipped stroke geometry, or the mark changes shape. */
-  function buildMask() {
-    var svg =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none">' +
-      '<path d="' +
-      REST_PATH +
-      '" stroke="#000" stroke-width="1"/></svg>';
-    return 'url("data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg) + '")';
+  /** True once the sheet has been spliced into this module. */
+  function hasSheet() {
+    return typeof FRAME_SHEET_BASE64 === 'string' && FRAME_SHEET_BASE64.length > 0 && FRAME_COUNT >= 2;
+  }
+
+  /** The strip as a CSS `url(...)`, or an empty string when there is no sheet. */
+  function buildSheetUrl() {
+    if (!hasSheet()) return '';
+    return 'url("data:image/png;base64,' + FRAME_SHEET_BASE64 + '")';
   }
 
   /**
    * Build the override stylesheet.
    *
-   * Two self-gates keep a hostile shell from making things worse:
-   * `prefers-reduced-motion: no-preference` (a reduced-motion user keeps the
-   * shipped still mark) and `@supports (mask-mode: alpha) and
-   * (mask-image: url(""))` — the same probe the shipped bundle uses — so a
-   * browser without CSS masking keeps the shipped rendering instead of getting
-   * an unmasked solid square.
+   * Three self-gates keep a hostile shell (or a hostile update) from making
+   * things worse:
+   *   - an empty sheet means an unspliced build, and then *nothing* is injected,
+   *     so the shipped indicator renders exactly as shipped;
+   *   - `prefers-reduced-motion: no-preference` keeps a reduced-motion user on
+   *     the shipped still mark;
+   *   - `@supports (mask-mode: alpha) and (mask-image: url(""))` — the same probe
+   *     the shipped bundle uses — so a browser without CSS masking keeps the
+   *     shipped rendering instead of getting a solid square.
    *
-   * @param mask - the `url(...)` produced by `buildMask()`.
-   * @returns the stylesheet text.
+   * The animation itself is one declaration: `mask-position` moves the strip by
+   * a whole cell at a time. There is no transform anywhere.
+   *
+   * @returns the stylesheet text, or an empty string when there is nothing to do.
    */
-  function buildCss(mask) {
+  function buildCss() {
+    var url = buildSheetUrl();
+    if (url === '') return '';
+    // `mask-position`'s percentage form aligns the strip's own percentage point
+    // with the box's, which lands cell `i` on the box for every integer `i`
+    // exactly. One cell leaves no divisor.
+    var span = FRAME_COUNT - 1;
+    var position = '0 calc(var(' + FRAME_VAR + ',0) / ' + span + ' * 100%)';
+    var size = '100% ' + FRAME_COUNT * 100 + '%';
+
     return (
-      // Relax containment on the icon box only: a wider swing needs ~1px more room.
-      ICON_SELECTOR +
-      '{contain:none!important;overflow:visible!important}' +
       '@media (prefers-reduced-motion:no-preference){' +
       '@supports (mask-mode:alpha) and (mask-image:url("")){' +
+      // The frame cell is 16px inside the shipped 14px slot: one extra pixel of
+      // room per side, expressed as a fraction of the box so a resized shell
+      // keeps the same proportion. `position:relative` guarantees the
+      // pseudo-element's containing block now that `contain` is off.
+      ICON_SELECTOR +
+      '{position:relative!important;contain:none!important;overflow:visible!important}' +
       // Hide the shipped APNG mask and the shipped still SVG.
       ICON_SELECTOR +
       '>*{display:none!important}' +
-      // Draw the same mark, driven by the two custom properties the loop writes.
+      // Paint the chosen cell, in the shell's own text colour.
       ICON_SELECTOR +
       '::after{' +
-      'content:"";position:absolute;inset:0;background:currentColor;' +
-      'transform-origin:' +
-      TUNING.pivot +
-      ';' +
-      'transform:translateY(var(--dsh-whale-lift,0px)) rotate(var(--dsh-whale-angle,0deg));' +
+      'content:"";position:absolute;inset:calc(-100% / ' +
+      BOX_GROWTH +
+      ');' +
+      'background:currentColor;' +
       'mask-image:' +
-      mask +
-      ';mask-mode:alpha;mask-repeat:no-repeat;mask-position:50% 50%;mask-size:100% 100%;' +
+      url +
+      ';mask-mode:alpha;mask-repeat:no-repeat;' +
+      'mask-position:' +
+      position +
+      ';mask-size:' +
+      size +
+      ';' +
       '-webkit-mask-image:' +
-      mask +
-      ';-webkit-mask-repeat:no-repeat;-webkit-mask-position:50% 50%;-webkit-mask-size:100% 100%;' +
-      'will-change:transform}' +
+      url +
+      ';-webkit-mask-repeat:no-repeat;' +
+      '-webkit-mask-position:' +
+      position +
+      ';-webkit-mask-size:' +
+      size +
+      '}' +
       '}}'
     );
   }
@@ -290,10 +331,13 @@
    * Own the animation loop for one document.
    *
    * `sync()` is idempotent: it starts the loop when the running indicator exists
-   * and motion is allowed, and stops it otherwise. `stop()` also clears the two
-   * custom properties so a disabled plugin leaves no residue.
+   * and motion is allowed, and stops it otherwise. `stop()` also clears the
+   * frame property so a disabled plugin leaves no residue.
    *
-   * @param root - the element the custom properties are written to (`<html>`).
+   * The loop's whole output is one integer: which pre-rendered cell to show. It
+   * never measures the mark, never builds a pose, and never writes a transform.
+   *
+   * @param root - the element the custom property is written to (`<html>`).
    * @param tuning - tuning values.
    * @returns { sync, stop }.
    */
@@ -305,6 +349,7 @@
     var lastTs = 0;
     var target = null;
     var watch = [];
+    var shown = -1;
 
     function findRunning() {
       try {
@@ -342,10 +387,10 @@
       return true;
     }
 
-    function clearProperties() {
+    function clearFrame() {
+      shown = -1;
       try {
-        root.style.removeProperty('--dsh-whale-angle');
-        root.style.removeProperty('--dsh-whale-lift');
+        root.style.removeProperty(FRAME_VAR);
       } catch (error) {
         /* detached root: nothing to clear */
       }
@@ -358,7 +403,7 @@
         // The indicator is gone: park the loop; poll() restarts it.
         rafId = 0;
         lastTs = 0;
-        clearProperties();
+        clearFrame();
         return;
       }
       rafId = requestAnimationFrame(frame);
@@ -366,16 +411,21 @@
       var seconds = lastTs === 0 ? 0 : Math.min(0.12, (timestamp - lastTs) / 1000);
       lastTs = timestamp;
 
-      var rate = meter.rate;
-      var period = periodForRate(rate, tuning);
-      phase += (seconds * 1000) / period;
-      if (phase > 1e6) phase -= Math.floor(phase / 1e6) * 1e6;
+      var period = periodForRate(meter.rate, tuning);
+      if (seconds > 0 && period > 0) {
+        phase += (seconds * 1000) / period;
+        // Keep the phase in one turn so a long session cannot drift in float
+        // precision, and so the wrap is the animation's own loop.
+        phase -= Math.floor(phase);
+      }
 
-      var angle = amplitudeForRate(rate, tuning) * Math.sin(phase * Math.PI * 2);
-      // The bob runs at twice the sway frequency: one dip per swing.
-      var lift = liftForRate(rate, tuning) * Math.sin(phase * Math.PI * 4);
-      root.style.setProperty('--dsh-whale-angle', angle.toFixed(2) + 'deg');
-      root.style.setProperty('--dsh-whale-lift', lift.toFixed(2) + 'px');
+      var index = frameIndexForPhase(phase, FRAME_COUNT);
+      // Writing only on change keeps the loop off the style engine on the many
+      // animation frames where the same cell is still the right one.
+      if (index !== shown) {
+        shown = index;
+        root.style.setProperty(FRAME_VAR, String(index));
+      }
     }
 
     function poll() {
@@ -396,7 +446,7 @@
 
     function sync() {
       if (typeof document === 'undefined') return;
-      if (!allowed()) {
+      if (!hasSheet() || !allowed()) {
         stop();
         return;
       }
@@ -431,7 +481,7 @@
       target = null;
       phase = 0;
       lastTs = 0;
-      clearProperties();
+      clearFrame();
     }
 
     // React to a preference change without a reload.
@@ -471,7 +521,7 @@
   // ---------------------------------------------------------------------
 
   /**
-   * Client plugin body: inject the stylesheet and run the sway loop.
+   * Client plugin body: inject the stylesheet and run the frame loop.
    *
    * Deliberately tolerant: a failure here must leave the shipped indicator
    * exactly as it was, never break the transcript.
@@ -480,9 +530,21 @@
    */
   function apply(ctx) {
     if (typeof document === 'undefined' || document === null) return;
+    if (!hasSheet()) {
+      try {
+        console.warn(
+          '[dsh-whale-sway] no frame sheet in this build; the shipped indicator is untouched. ' +
+            'Run `node tools/build-frames.mjs && node tools/sync-sheet.mjs`.',
+        );
+      } catch (ignored) {
+        /* console unavailable */
+      }
+      return;
+    }
 
     var root = document.documentElement;
-    var css = buildCss(buildMask());
+    var css = buildCss();
+    if (css === '') return;
     var controller = createController(root, TUNING);
     var tag = null;
 
@@ -543,16 +605,20 @@
   var manifest = {
     apply: apply,
     inject: [],
-    REST_PATH: REST_PATH,
     TUNING: TUNING,
     CSS_TAG: CSS_TAG,
     ICON_SELECTOR: ICON_SELECTOR,
+    FRAME_VAR: FRAME_VAR,
+    FRAME_COUNT: FRAME_COUNT,
+    FRAME_CELL: FRAME_CELL,
+    FRAME_SHEET_BASE64: FRAME_SHEET_BASE64,
+    FRAME_SOURCE: FRAME_SOURCE,
     clamp: clamp,
     periodForRate: periodForRate,
-    amplitudeForRate: amplitudeForRate,
-    liftForRate: liftForRate,
+    frameIndexForPhase: frameIndexForPhase,
     createRateMeter: createRateMeter,
-    buildMask: buildMask,
+    hasSheet: hasSheet,
+    buildSheetUrl: buildSheetUrl,
     buildCss: buildCss,
   };
 
