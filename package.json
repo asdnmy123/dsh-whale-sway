@@ -1,0 +1,56 @@
+{
+  "name": "dsh-whale-sway",
+  "version": "0.1.0",
+  "description": "让 DSH 运行状态行的鲸尾真正摆起来：摆幅更大，摆动速度跟随实时 tok/s。A token-rate-driven whale-tail sway for the DeepSeek Harness running indicator.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "whale",
+    "whale-tail",
+    "animation",
+    "tokens-per-second",
+    "running-indicator",
+    "css-mask"
+  ],
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "preview",
+    "tools"
+  ],
+  "license": "MIT",
+  "author": "asdnmy123",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asdnmy123/dsh-whale-sway.git"
+  },
+  "homepage": "https://github.com/asdnmy123/dsh-whale-sway#readme",
+  "bugs": {
+    "url": "https://github.com/asdnmy123/dsh-whale-sway/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-chat"
+      ],
+      "platform": "web"
+    }
+  }
+}

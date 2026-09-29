@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>dsh-whale-sway · real-engine preview</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #f6f7fa; }
+  body { font: 14px/22px "Segoe UI", system-ui, sans-serif; padding: 24px 32px; }
+  /* --- the shipped running row, reduced to what the override touches --- */
+  .conversation { color: #4d6bfe; }
+  .row { display: flex; flex-direction: column; align-items: flex-start; }
+  .runningContent { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  /* the shipped icon box: 14px, contain:strict, overflow:hidden — our CSS relaxes it */
+  .h_runningIcon { width: 14px; height: 14px; contain: strict; flex: none; display: inline-flex; position: relative; overflow: hidden; }
+  /* stands in for the shipped APNG mask: if our override works, this must vanish */
+  .h_runningWhaleAnimated { display: block; position: absolute; inset: 0; background: currentColor; opacity: .3; }
+  .h_runningWhaleStill { display: initial; width: 100%; height: 100%; }
+  /* magnifier: 10x so a 14px icon is legible in a screenshot */
+  .magnify { transform: scale(10); transform-origin: 0 0; }
+  .pad { height: 110px; }
+  .pad-after { height: 190px; }
+  #caption { color: #333; font: 13px/20px ui-monospace, Consolas, monospace; margin: 0; white-space: pre; }
+  #warn { color: #c0392b; font: 13px/20px ui-monospace, Consolas, monospace; margin: 0; }
+</style>
+</head>
+<body>
+<div class="conversation" data-conversation-scroll>
+  <div class="pad"></div>
+  <div class="magnify">
+    <div class="row" data-chat-running>
+      <span class="runningContent">
+        <span class="h_runningIcon">
+          <span class="h_runningWhaleAnimated"></span>
+          <svg class="h_runningWhaleStill" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8.844 13.742C8.967 12.328 8.45 10.4 8.45 9.65C8.45 8.94 8.88 8.43 9.6 8.43C11.285 8.43 12.106 8.281 12.685 8.104C13.71 7.791 14.585 6.768 15.055 5.945C15.137 5.803 14.99 5.641 14.829 5.671C13.829 5.86 12.828 5.376 11.827 4.978C10.659 4.514 9.491 4.707 8.935 4.876C8.805 4.915 8.658 4.819 8.636 4.686C8.468 3.643 7.405 2.615 5.498 2.238C4.54 2.048 3.748 1.574 3.347 1.202C3.252 1.113 3.088 1.125 3.03 1.242C2.628 2.059 2.168 3.82 5.248 6.115C5.82 6.494 6.31 6.785 6.574 7.637C6.72 8.104 6.157 9.168 6.061 9.368C5.157 11.27 5.089 12.19 4.926 13.742" stroke="currentColor" stroke-width="1"></path>
+          </svg>
+        </span>
+        <span class="runningText">深度求索中，用时 1秒 ···</span>
+      </span>
+    </div>
+  </div>
+  <div class="pad-after"></div>
+</div>
+<p id="caption">booting…</p>
+<p id="warn"></p>
+
+<script src="../client.js"></script>
+<script>
+  // ---------------------------------------------------------------------
+  // Deterministic clock: rAF is queued instead of scheduled, so the harness
+  // can advance the real driver by an exact number of virtual milliseconds.
+  // ---------------------------------------------------------------------
+  var pending = [];
+  var nextId = 1;
+  var clock = 0;
+  window.requestAnimationFrame = function (callback) { pending.push(callback); return nextId++; };
+  window.cancelAnimationFrame = function () {};
+
+  function pump(milliseconds, step) {
+    var target = clock + milliseconds;
+    var dt = step || 16.7;
+    var guard = 0;
+    while (clock < target && guard < 10000) {
+      clock += dt;
+      var batch = pending;
+      pending = [];
+      for (var i = 0; i < batch.length; i += 1) batch[i](clock);
+      guard += 1;
+    }
+  }
+
+  var api = window.__dshIconApi;
+  var caption = document.getElementById('caption');
+  var warn = document.getElementById('warn');
+  var params = new URLSearchParams(location.search);
+  var charsPerSecond = Number(params.get('cps') || 80);
+
+  if (api === undefined) {
+    warn.textContent = 'client.js did not expose globalThis.__dshIconApi';
+  } else {
+    // Exercise the real plugin entry point.
+    api.apply({ effect: function (callback) { callback(); } });
+
+    var box = document.querySelector('[class*="_runningIcon"]');
+    var animated = document.querySelector('[class*="_runningWhaleAnimated"]');
+    var still = document.querySelector('[class*="_runningWhaleStill"]');
+    var after = getComputedStyle(box, '::after');
+
+    // Simulate the token stream: grow text inside the measured container.
+    var scroll = document.querySelector('[data-conversation-scroll]');
+    var stream = document.createElement('div');
+    scroll.insertBefore(stream, scroll.firstChild);
+    var characters = 0;
+    setInterval(function () {
+      characters += Math.round(charsPerSecond / 10);
+      stream.textContent = 'x'.repeat(characters);
+    }, 100);
+
+    var tokensPerSecond = charsPerSecond / api.TUNING.charsPerToken;
+    var period = api.periodForRate(tokensPerSecond);
+    var amplitude = api.amplitudeForRate(tokensPerSecond);
+    var observed = { min: 0, max: 0 };
+    var frames = 0;
+
+    function readVar(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function report(frozen) {
+      caption.textContent =
+        'simulated ' + charsPerSecond + ' chars/s  =  ' + tokensPerSecond.toFixed(1) + ' tok/s\n' +
+        'period ' + period.toFixed(0) + ' ms   amplitude +/-' + amplitude.toFixed(1) + ' deg\n' +
+        'driver frames pumped: ' + frames + '\n' +
+        'live --dsh-whale-angle: ' + (readVar('--dsh-whale-angle') || '(unset)') +
+        '   --dsh-whale-lift: ' + (readVar('--dsh-whale-lift') || '(unset)') + '\n' +
+        'observed angle range: ' + observed.min.toFixed(2) + ' .. ' + observed.max.toFixed(2) + ' deg\n' +
+        'shipped APNG layer: display=' + getComputedStyle(animated).display +
+        '   shipped still SVG: display=' + getComputedStyle(still).display + '\n' +
+        'our ::after mask: ' + (after.maskImage || after.webkitMaskImage || '(none)').slice(0, 34) + '…\n' +
+        (frozen === true ? 'FROZEN at quarter cycle (peak swing)' : 'settling…');
+    }
+
+    // Let the real rate meter converge over virtual time, then advance the real
+    // driver to the quarter-cycle peak and stop, so the screenshot is definite.
+    setTimeout(function () {
+      var pumps = 0;
+      var step = 8;
+      while (clock < period * 0.25 && pumps < 400) {
+        pump(step, step);
+        pumps += 1;
+        var angle = parseFloat(readVar('--dsh-whale-angle')) || 0;
+        frames += 1;
+        observed.min = Math.min(observed.min, angle);
+        observed.max = Math.max(observed.max, angle);
+      }
+      report(true);
+    }, 1600);
+
+    setInterval(function () { if (frames === 0) report(false); }, 200);
+    report(false);
+  }
+</script>
+</body>
+</html>

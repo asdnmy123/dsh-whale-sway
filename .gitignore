@@ -1,0 +1,11 @@
+# dependencies (a link:-installed DSH plugin needs none)
+node_modules/
+
+# scratch profile of the headless-Edge end-to-end harness
+.edge-tmp/
+
+# logs and OS noise
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

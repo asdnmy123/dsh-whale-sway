@@ -1,0 +1,18 @@
+# ============================================================================
+# dsh-whale-sway —— DSH bundle patch
+# ============================================================================
+# The plugin's "mount declaration": DSH stacks every bundle layer's patch at
+# startup, and this file inserts this plugin's one Loader row.
+#
+# The client half is discovered from `dsh.client` in package.json, so the row
+# itself is bare: no config, no services, no build step.
+#
+# Install (profile defaults to the active one):
+#   dsh plugin --profile desktop add dsh-whale-sway
+# or from a local checkout:
+#   dsh plugin --profile desktop add link:<absolute path to this directory>
+# ============================================================================
+
+- insert:
+    - id: dsh-whale-sway
+      name: dsh-whale-sway

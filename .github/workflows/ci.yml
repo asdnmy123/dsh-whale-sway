@@ -1,0 +1,22 @@
+# The plugin has no build step and no dependencies, so CI is one command.
+#
+# `tools/test-motion.mjs` loads the real `client.js` through the browser module
+# loader's own handshake inside `node:vm` (which also proves the file parses),
+# exercises the pure motion maths and the stylesheet builder, runs `apply()`
+# against a stub DOM, and dynamically imports the Host half.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node tools/test-motion.mjs

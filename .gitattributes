@@ -1,0 +1,5 @@
+# Keep the repository LF-only so Windows and Unix checkouts stay identical.
+* text=auto eol=lf
+
+# Raster previews are binary: never normalize them.
+*.png binary
