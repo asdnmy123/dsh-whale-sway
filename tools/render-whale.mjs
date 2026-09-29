@@ -124,7 +124,11 @@ export function render(segs, opts) {
   const viewBox = 16;
   const ss = 4; // supersample factor
   const inner = size * ss;
-  const unit = inner / viewBox;
+  // `pad` widens the mapped box by that many viewBox units on every side: a
+  // rotated frame needs room the live CSS box gets from `overflow: visible`,
+  // but a rasterized frame is simply clipped by its canvas.
+  const pad = opts.pad ?? 0;
+  const unit = inner / (viewBox + pad * 2);
   const half = ((opts.stroke ?? 1) / 2) * unit;
 
   const coverage = new Float32Array(inner * inner);
@@ -142,7 +146,7 @@ export function render(segs, opts) {
       px = pivot[0] + dx * cos - dy * sin;
       py = pivot[1] + dx * sin + dy * cos;
     }
-    return [px * unit, py * unit];
+    return [(px + pad) * unit, (py + pad) * unit];
   };
 
   for (const [x1, y1, x2, y2] of segs) {
