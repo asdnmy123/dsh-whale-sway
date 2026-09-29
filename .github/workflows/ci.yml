@@ -24,6 +24,9 @@
 #      tarball is the six runtime files and nothing else: the toolchain and the
 #      source artwork stay in the repository, which the plugin never reads at run
 #      time because `client.js` inlines its own sheet.
+#   8. `tools/check-release.mjs` keeps the docs honest about the release: the
+#      pinned install ref, the tarball name, every repository URL and the quality
+#      table's offline-test count must all equal `package.json`.
 name: ci
 
 on:
@@ -65,3 +68,6 @@ jobs:
 
       - name: the published tarball carries the plugin and nothing else
         run: node tools/check-pack.mjs
+
+      - name: the docs and the release artefact agree with package.json
+        run: node tools/check-release.mjs

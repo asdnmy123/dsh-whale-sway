@@ -91,10 +91,18 @@
   /** Scroll container the text-length sampler reads from. */
   var SCROLL_ATTR = 'data-conversation-scroll';
   /**
-   * The shippped CSS-module class is `<hash>_runningIcon`. The hash changes per
+   * The shipped CSS-module class is `<hash>_runningIcon`. The hash changes per
    * build, the suffix does not, so the override keys on the substring.
    */
-  var ICON_SELECTOR = '[' + RUNNING_ATTR + '] [class*="_runningIcon"]';
+  var ICON_CLASS_TOKEN = '_runningIcon';
+  /** Presence probe inside the host; the one-shot diagnostic keys on it too. */
+  var ICON_CHILD_SELECTOR = '[class*="' + ICON_CLASS_TOKEN + '"]';
+  var ICON_SELECTOR = '[' + RUNNING_ATTR + '] ' + ICON_CHILD_SELECTOR;
+  /**
+   * How long a markup mismatch must persist before it is reported. Long enough
+   * that a slow first render or a lazily mounted icon cannot trigger it.
+   */
+  var DIAGNOSE_AFTER_MS = 1500;
   /** The custom property the loop writes; a whole number, never a length. */
   var FRAME_VAR = '--dsh-whale-frame';
   /** How much wider than the shipped slot the frame cell needs to be, 1/14. */
@@ -350,6 +358,16 @@
     var target = null;
     var watch = [];
     var shown = -1;
+    // One-shot diagnostics: a shell update that renames either attribute leaves
+    // this plugin a silent no-op, and "I installed it and nothing happened" is
+    // the most expensive report to chase. Each failure mode warns once per page
+    // load, and only after the mismatch has persisted long enough that a slow
+    // first render cannot explain it.
+    var warnedIconMiss = false;
+    var warnedHostMiss = false;
+    var iconMissSince = 0;
+    var streamSince = 0;
+    var lastLength = -1;
 
     function findRunning() {
       try {
@@ -396,6 +414,88 @@
       }
     }
 
+    /**
+     * Report a markup mismatch exactly once. Both failures below are silent by
+     * nature — the shipped indicator simply keeps rendering — so without this a
+     * user concludes the install did nothing.
+     */
+    function diagnose(message) {
+      try {
+        console.warn(
+          '[dsh-whale-sway] ' +
+            message +
+            ' The shipped mark is left untouched. If this is unexpected, please open an issue at ' +
+            'https://github.com/asdnmy123/dsh-whale-sway/issues',
+        );
+      } catch (error) {
+        /* console unavailable */
+      }
+    }
+
+    /**
+     * The running host is up but nothing inside it matches the icon class: the
+     * shipped CSS module was renamed, or the mark moved out of the host row.
+     */
+    function noteIconMiss(element) {
+      if (warnedIconMiss || warnedHostMiss) return;
+      // A host that cannot be queried proves nothing, so stay quiet.
+      if (typeof element.querySelector !== 'function') return;
+      var found = false;
+      try {
+        found = element.querySelector(ICON_CHILD_SELECTOR) !== null;
+      } catch (error) {
+        return;
+      }
+      if (found) {
+        iconMissSince = 0;
+        return;
+      }
+      var at = nowMs();
+      if (iconMissSince === 0) iconMissSince = at;
+      if (at - iconMissSince < DIAGNOSE_AFTER_MS) return;
+      warnedIconMiss = true;
+      diagnose(
+        'the running indicator is on screen but it contains no `' +
+          ICON_CLASS_TOKEN +
+          '` element, so there is nothing for the frames to paint.',
+      );
+    }
+
+    /**
+     * No host at all while the transcript keeps growing: the running attribute
+     * itself was renamed, which is the one mismatch the CSS cannot reveal.
+     */
+    function noteHostMiss() {
+      if (warnedHostMiss || warnedIconMiss) return;
+      var element = null;
+      var length = -1;
+      try {
+        element = document.querySelector('[' + SCROLL_ATTR + ']');
+        if (element !== null && typeof element.textContent === 'string') length = element.textContent.length;
+      } catch (error) {
+        return;
+      }
+      if (length < 0) {
+        streamSince = 0;
+        return;
+      }
+      var at = nowMs();
+      if (lastLength >= 0 && length > lastLength) {
+        if (streamSince === 0) streamSince = at;
+        if (at - streamSince >= DIAGNOSE_AFTER_MS) {
+          warnedHostMiss = true;
+          diagnose(
+            'the transcript is still growing but no `' +
+              RUNNING_ATTR +
+              '` host appeared, so the running indicator was never found.',
+          );
+        }
+      } else {
+        streamSince = 0;
+      }
+      lastLength = length;
+    }
+
     function frame(timestamp) {
       var element = target;
       if (element === null || element.isConnected !== true) element = target = findRunning();
@@ -434,10 +534,13 @@
       if (element === null) {
         meter.reset();
         target = null;
+        iconMissSince = 0;
+        noteHostMiss();
         return;
       }
       target = element;
       meter.sample(readLength(element), nowMs());
+      noteIconMiss(element);
       if (rafId === 0) {
         lastTs = 0;
         rafId = requestAnimationFrame(frame);

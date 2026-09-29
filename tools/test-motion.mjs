@@ -108,6 +108,13 @@ function loadModule(source) {
     isConnected: true,
     closest: (selector) => (selector === '[data-conversation-scroll]' ? host : null),
     parentElement: host,
+    /**
+     * A real host carries the icon as a child. `missing` models the shipped CSS
+     * module being renamed, which is exactly what the one-shot diagnostic
+     * watches for; a host without `querySelector` (any other stub) stays quiet.
+     */
+    querySelector: (selector) =>
+      selector === '[class*="_runningIcon"]' && icon.missing !== true ? icon : null,
   };
 
   const root = {
@@ -134,6 +141,8 @@ function loadModule(source) {
     body: host,
     querySelector(selector) {
       if (selector === '[data-chat-running]') return state.indicatorGone ? null : icon;
+      // The transcript container the host-miss diagnostic samples for growth.
+      if (selector === '[data-conversation-scroll]') return host;
       return null;
     },
     createElement(tag) {
@@ -469,6 +478,35 @@ test('the loop parks itself when the indicator disappears', () => {
   harness.pump(0.5, 40);
   equal(harness.state.styleWrites.length, writesAfterVanish, 'a parked loop must not write again');
   equal(harness.state.rafQueue.length, 0, 'a parked loop must not reschedule itself');
+});
+
+test('a renamed icon class is diagnosed once instead of failing silently', () => {
+  const harness = loadModule(SOURCE);
+  harness.install();
+  harness.pump(1, 40);
+  equal(harness.state.warnings.length, 0, 'a healthy indicator must stay quiet: ' + harness.state.warnings.join(' | '));
+  harness.icon.missing = true;
+  harness.pump(1, 40);
+  equal(harness.state.warnings.length, 0, 'a mismatch shorter than the window must stay quiet');
+  harness.pump(1, 40);
+  equal(harness.state.warnings.length, 1, 'exactly one diagnostic, got: ' + harness.state.warnings.join(' | '));
+  assert(harness.state.warnings[0].indexOf('_runningIcon') !== -1, 'the diagnostic must name the missing class token');
+  assert(harness.state.warnings[0].indexOf('dsh-whale-sway') !== -1, 'the diagnostic must identify the plugin');
+  harness.pump(4, 40);
+  equal(harness.state.warnings.length, 1, 'the diagnostic must not repeat');
+});
+
+test('streaming with no running host is diagnosed once, and idling never is', () => {
+  const harness = loadModule(SOURCE);
+  harness.state.indicatorGone = true;
+  harness.install();
+  harness.pump(3, 0);
+  equal(harness.state.warnings.length, 0, 'an idle shell must not be reported');
+  harness.pump(3, 40);
+  equal(harness.state.warnings.length, 1, 'exactly one diagnostic, got: ' + harness.state.warnings.join(' | '));
+  assert(harness.state.warnings[0].indexOf('data-chat-running') !== -1, 'the diagnostic must name the missing attribute');
+  harness.pump(3, 40);
+  equal(harness.state.warnings.length, 1, 'the diagnostic must not repeat');
 });
 
 test('apply tags its stylesheet like a shipped bundle', () => {

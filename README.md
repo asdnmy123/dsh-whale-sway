@@ -119,6 +119,7 @@ dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.2.0
 - `@supports (mask-mode: alpha) and (mask-image: url(""))` —— 不支持 CSS 遮罩的浏览器保持出厂渲染，不会出现实心色块。
 - 帧带未内联时（构建产物缺失）不注入任何规则，出厂图标原样保留。
 - 运行时另设 `forced-colors: active` 限流；全流程 `try/catch`，任一异常均回退出厂渲染。
+- **结构改名诊断（一次性）**：插件依赖三个 DSH 内部标记 —— 宿主 `data-chat-running`、图标类名后缀 `_runningIcon`、滚动容器 `data-conversation-scroll`。上游若改了其中任何一个，本插件会静默失效（出厂图标照常显示），因此每种失配都会在持续 1.5 秒后发出**一次** `console.warn`（不重复、不影响界面）：① 运行指示器在屏但内部找不到 `_runningIcon`；② 对话仍在增长却始终找不到 `data-chat-running` 宿主。空闲状态不会误报。
 
 ## 构建与复现
 
@@ -127,12 +128,13 @@ dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.2.0
 ```powershell
 node tools/build-frames.mjs      # 素材 -> preview/frames-sheet.png + tools/generated/frames.json
 node tools/sync-sheet.mjs        # 将帧带内联至 client.js（幂等；--check 供 CI 使用）
-node tools/test-motion.mjs       # 离线测试：运动数学、样式表、VM 内的换帧循环
+node tools/test-motion.mjs       # 离线测试：运动数学、样式表、VM 内的换帧循环、一次性诊断
 node tools/verify-frames.mjs     # 独立复核：帧带来源、背景剔除、裁剪与幅度
 node tools/verify-motion.mjs     # 独立复核：零变换、整数帧号、速率缩放
 node tools/make-gif.mjs          # 重新生成预览动图（逐像素回读校验）
 node tools/engine-shot.mjs       # 真实渲染引擎截图
 node tools/check-pack.mjs        # 校验发布包只含运行时文件（执行真实 npm pack）
+node tools/check-release.mjs     # 发版一致性：pin 版本、tarball 名、仓库 URL、离线测试计数
 ```
 
 构建为确定性过程：重复执行产出逐字节一致，CI 通过重新生成并比对持续校验。真实引擎截图：[高速输出](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/engine-fast.png) · [空闲等待](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/engine-slow.png)。
@@ -143,11 +145,12 @@ node tools/check-pack.mjs        # 校验发布包只含运行时文件（执行
 
 | 检查 | 结果 |
 | --- | --- |
-| 离线测试 `tools/test-motion.mjs` | 21 / 21 通过 |
+| 离线测试 `tools/test-motion.mjs` | 23 / 23 通过 |
 | 帧序列独立验证 `tools/verify-frames.mjs` | 8 / 8 通过（确定性检查 9 / 9） |
 | 运行时独立验证 `tools/verify-motion.mjs` | 7 / 7 通过 |
 | 发布包边界 `tools/check-pack.mjs` | 通过（真实 `npm pack`：仅 6 个运行时文件） |
-| 持续集成（ubuntu，Node 20） | 全部通过 |
+| 发版一致性 `tools/check-release.mjs` | 通过（pin 版本、tarball 名、仓库 URL、离线计数） |
+| 持续集成（ubuntu，Node 20） | 8 步全部通过 |
 
 两个独立验证器均自带解码与重采样实现，并通过注入缺陷（变换声明、小数帧号、属性未清理、空帧带、错序帧、白底板、过小裁剪、错误素材路径与摘要）确认其检查确实会失败。
 
