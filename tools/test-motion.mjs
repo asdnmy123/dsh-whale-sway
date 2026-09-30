@@ -143,15 +143,18 @@ function loadModule(source) {
     isConnected: true,
     closest: (selector) => (selector === '[data-conversation-scroll]' ? host : null),
     parentElement: host,
-    /**
-     * A real host carries the icon as a child. `missing` models the shipped CSS
-     * module being renamed, which is exactly what the one-shot diagnostic
-     * watches for; a host without `querySelector` (any other stub) stays quiet.
-     */
-    querySelector: (selector) =>
-      selector === '[class*="_runningIcon"]' && icon.missing !== true ? icon : null,
   };
   icon.style = createStyle('icon');
+
+  // DSH's running row and the child selected by the mask CSS are distinct.
+  const running = {
+    isConnected: true,
+    closest: icon.closest,
+    parentElement: host,
+    querySelector: (selector) =>
+      selector === '[class*="_runningIcon"]' && icon.missing !== true ? state.replacementIcon || icon : null,
+  };
+  running.style = createStyle('running');
 
   const root = { style: createStyle('root') };
 
@@ -171,7 +174,7 @@ function loadModule(source) {
     head,
     body: host,
     querySelector(selector) {
-      if (selector === '[data-chat-running]') return state.indicatorGone ? null : icon;
+      if (selector === '[data-chat-running]') return state.indicatorGone ? null : running;
       // The transcript container the host-miss diagnostic samples for growth.
       if (selector === '[data-conversation-scroll]') return host;
       return null;
@@ -297,7 +300,15 @@ function loadModule(source) {
     return matches.length === 0 ? null : matches[matches.length - 1].owner;
   }
 
-  return { api, state, pump, install, frames, offsets, writesOf, writerOf, host, icon, root };
+  function replaceIcon() {
+    const previous = state.replacementIcon || icon;
+    previous.isConnected = false;
+    const next = { isConnected: true, style: createStyle('icon') };
+    state.replacementIcon = next;
+    return next;
+  }
+
+  return { api, state, pump, install, frames, offsets, writesOf, writerOf, host, running, icon, root, replaceIcon };
 }
 
 // ---------------------------------------------------------------------------
@@ -776,6 +787,85 @@ function walkTree(node, visit) {
   visit(node);
   for (const child of node.children || []) walkTree(child, visit);
 }
+
+/** A live settings document feeding the real controller on a nested DOM. */
+function runtimeSettingsHarness(initial) {
+  const harness = loadModule(SOURCE);
+  const primitives = fakePrimitives();
+  harness.api.setModuleRequire((id) => id === 'react' ? fakeReact : primitives);
+  let value = initial;
+  const listeners = new Set();
+  const scope = {
+    getSnapshot: () => ({ status: 'ready', value }),
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+  };
+  harness.install({
+    inject(deps, mount) {
+      mount({
+        locale: { register() {}, bind: () => (key) => key },
+        slots: { inject() { return () => {}; } },
+        configForms: { get: () => scope, whileServed: (namespaces, register) => register() },
+      });
+      return { dispose() {} };
+    },
+  });
+  return {
+    ...harness,
+    update(next) { value = next; for (const listener of listeners) listener(); },
+  };
+}
+
+test('saved modes override the child icon fallback without painting the running row', () => {
+  const h = runtimeSettingsHarness({ mode: 'sway-vivid' });
+  const sheet = '--' + h.api.SHEET_VAR;
+  for (const mode of ['sway-vivid', 'sway-gentle', 'sway', 'sway-vivid']) {
+    h.update({ mode });
+    equal(h.icon.style.getPropertyValue(sheet),
+      'url("data:image/png;base64,' + h.api.panelForMode(mode).base64 + '")',
+      'the actual mask element carries the saved mode: ' + mode);
+    equal(h.running.style.values.size, 0, 'the row must not receive paint properties');
+    h.pump(0.2, 40);
+    assert(h.icon.style.getPropertyValue(h.api.FRAME_VAR) !== '', 'the child advances frames');
+    assert(h.icon.style.getPropertyValue('--' + h.api.POS_VAR).endsWith('%'), 'the mask offset is on the child');
+  }
+});
+
+test('a replaced or late icon receives the saved strip and a frame on the same running row', () => {
+  const h = runtimeSettingsHarness({ mode: 'sway-gentle' });
+  h.pump(0.3, 40);
+  const replacement = h.replaceIcon();
+  h.pump(0.02, 40);
+  assert(replacement.style.getPropertyValue('--' + h.api.SHEET_VAR).includes(
+    h.api.panelForMode('sway-gentle').base64), 'a new child receives the saved strip immediately');
+  assert(replacement.style.getPropertyValue(h.api.FRAME_VAR) !== '', 'the new child receives a frame immediately');
+  equal(h.icon.style.values.size, 0, 'the old child is cleaned up');
+
+  h.icon.missing = true;
+  h.update({ mode: 'sway-vivid' });
+  h.pump(0.2, 40);
+  equal(replacement.style.values.size, 0, 'a removed child is cleaned up');
+  h.icon.missing = false;
+  const late = h.replaceIcon();
+  h.pump(0.02, 40);
+  assert(late.style.getPropertyValue('--' + h.api.SHEET_VAR).includes(
+    h.api.panelForMode('sway-vivid').base64), 'a late child receives a mode saved while it was absent');
+  assert(late.style.getPropertyValue(h.api.FRAME_VAR) !== '', 'a late child receives its offset with the strip');
+  h.update({ enabled: false });
+  equal(late.style.values.size, 0, 'disabling clears every paint property on the active child');
+  h.update({ enabled: true, mode: 'sway-gentle' });
+  h.pump(0.02, 40);
+  assert(late.style.getPropertyValue('--' + h.api.SHEET_VAR).includes(
+    h.api.panelForMode('sway-gentle').base64), 'reenabling uses the newly selected strip');
+});
+
+test('saving a sampling interval restarts the live sampler', () => {
+  const h = runtimeSettingsHarness({ sampleMs: 140 });
+  equal(h.state.intervals.length, 1, 'one sampler is running');
+  equal(h.state.intervals[0].ms, 140, 'the saved interval applies on initial load');
+  h.update({ sampleMs: 250 });
+  equal(h.state.intervals.length, 1, 'changing the interval leaves one sampler');
+  equal(h.state.intervals[0].ms, 250, 'the sampler uses the changed interval');
+});
 
 test('the Plugins page is given the configuration, and the document repaints the sway', () => {
   const harness = loadModule(SOURCE);

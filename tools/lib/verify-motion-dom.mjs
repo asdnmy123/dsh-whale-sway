@@ -327,6 +327,7 @@ export function createWorld(options = {}) {
   transcript.textContent = options.transcript !== undefined ? String(options.transcript) : '';
   host.setAttribute('data-chat-running', '');
   icon.className = 'xyz_runningIcon';
+  host.querySelector = (selector) => selector === '[class*="_runningIcon"]' ? icon : null;
 
   // `closest()` on the indicator walks up to the conversation scroll container,
   // the same way the real DOM does.

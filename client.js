@@ -971,7 +971,16 @@
      * real mode change or after the shell replaced the icon element.
      */
     function applyPaint() {
-      var element = target;
+      var element = null;
+      try {
+        if (target !== null) element = target.querySelector(ICON_CHILD_SELECTOR);
+      } catch (error) {
+        /* an unavailable icon is retried on the next frame or poll */
+      }
+      // Paint on the element selected by the mask CSS. A declaration on the
+      // running row loses to the icon's own default sheet through inheritance.
+      // The shell can also replace this child while keeping the row mounted.
+      if (painted !== element) clearPaint();
       if (element === null || element.style === undefined || element.style === null) return;
       var panel = panelForMode(config.mode);
       if (panel === null || typeof panel.base64 !== 'string' || panel.base64.length === 0) return;
@@ -1001,7 +1010,7 @@
      * @param index - the cell index to show.
      */
     function writeFrame(index) {
-      var element = target;
+      var element = painted;
       if (element === null || element.style === undefined || element.style === null) return;
       var count = paintedCount >= 2 ? paintedCount : FRAME_COUNT;
       var percent = count > 1 ? (index / (count - 1)) * 100 : 0;
@@ -1095,32 +1104,6 @@
       lastLength = length;
     }
 
-    /**
-     * Adopt one normalized configuration.
-     *
-     * The motion maths read the controller's own object, so adopting a
-     * configuration is a copy into it, then a repaint and a resync. The sampling
-     * interval is the single setting the maths cannot simply re-read, so a
-     * changed `sampleMs` restarts it.
-     *
-     * @param next - the configuration to adopt.
-     */
-    function setConfig(next) {
-      var restartSampling = config.sampleMs !== next.sampleMs;
-      assignConfig(config, next);
-      applyPaint();
-      if (restartSampling && pollId !== 0) {
-        try {
-          window.clearInterval(pollId);
-        } catch (error) {
-          /* nothing to clear */
-        }
-        pollId = 0;
-      }
-      if (config.enabled) sync();
-      else stop();
-    }
-
     function frame(timestamp) {
       var element = target;
       if (element === null || element.isConnected !== true) element = target = findRunning();
@@ -1172,9 +1155,10 @@
       // inline write with it; rewriting the held index on a new host is what
       // keeps a paused sway visible instead of blank between two frames.
       var carried =
-        element.style !== undefined &&
-        element.style !== null &&
-        element.style.getPropertyValue(FRAME_VAR) !== '';
+        painted !== null &&
+        painted.style !== undefined &&
+        painted.style !== null &&
+        painted.style.getPropertyValue(FRAME_VAR) !== '';
       if (shown >= 0 && (changedHost || !carried)) writeFrame(shown);
       meter.sample(readLength(element), nowMs());
       noteIconMiss(element);
@@ -1865,9 +1849,8 @@
         if (snapshot === null || snapshot === undefined) return;
         if (snapshot.status !== 'ready' || snapshot.value === null || snapshot.value === undefined) return;
         var next = normalizeConfig(snapshot.value);
-        assignConfig(config, next);
-        setInstalled(next.enabled);
         controller.setConfig(next);
+        setInstalled(next.enabled);
       }
 
       track(scope.subscribe(syncDocument));
