@@ -153,8 +153,8 @@
         "en": "Sway style"
       },
       "hint": {
-        "zh": "运行指示器中鲸尾摆动的素材与幅度。",
-        "en": "The artwork and amplitude the whale tail swings with in the running indicator."
+        "zh": "预览以统一速度逐帧播放；选择后保存时生效。",
+        "en": "Previews play frame by frame at one shared speed; the selection takes effect when saved."
       }
     },
     {
@@ -328,7 +328,7 @@
       "group.speed": "速度",
       "group.sampling": "速率取样",
       "field.mode.label": "摆动方式",
-      "field.mode.hint": "运行指示器中鲸尾摆动的素材与幅度。",
+      "field.mode.hint": "预览以统一速度逐帧播放；选择后保存时生效。",
       "field.mode.option.sway": "原生",
       "field.mode.option.sway-gentle": "轻摆",
       "field.mode.option.sway-vivid": "大摆",
@@ -358,14 +358,15 @@
       "page.saveFailed": "本部署没有接受这些值，改动已保留。",
       "page.overridden": "已覆盖",
       "page.reset": "恢复默认",
-      "page.invalidNumber": "仅接受数字；留空表示使用默认值。"
+      "page.invalidNumber": "仅接受数字；留空表示使用默认值。",
+      "page.previewSelected": "已选择"
     },
     "en": {
       "group.sway": "Sway",
       "group.speed": "Speed",
       "group.sampling": "Rate sampling",
       "field.mode.label": "Sway style",
-      "field.mode.hint": "The artwork and amplitude the whale tail swings with in the running indicator.",
+      "field.mode.hint": "Previews play frame by frame at one shared speed; the selection takes effect when saved.",
       "field.mode.option.sway": "As drawn",
       "field.mode.option.sway-gentle": "Gentle",
       "field.mode.option.sway-vivid": "Vivid",
@@ -395,7 +396,8 @@
       "page.saveFailed": "The deployment did not accept these values; the edits were kept.",
       "page.overridden": "Overridden",
       "page.reset": "Reset to default",
-      "page.invalidNumber": "Only a number is accepted; an empty field uses the default."
+      "page.invalidNumber": "Only a number is accepted; an empty field uses the default.",
+      "page.previewSelected": "Selected"
     }
   };
   /* dsh-whale-sway:settings:end */
@@ -1433,7 +1435,7 @@
    */
   function pageCss() {
     var host = '.' + PAGE_CLASS;
-    return (
+    var css = (
       host + '{display:flex;flex-direction:column;gap:18px;color:var(--dsw-alias-label-primary)}' +
       host + '__section{display:flex;flex-direction:column;gap:12px}' +
       host + '__title{margin:0;font-size:16px;font-weight:600;line-height:24px;' +
@@ -1452,8 +1454,35 @@
       'color:var(--dsw-alias-label-secondary);background:none;text-decoration:underline}' +
       host + '__reset:disabled{cursor:default;color:var(--dsw-alias-state-idle-primary)}' +
       host + '__control{display:flex;align-items:center;gap:10px;flex-wrap:wrap}' +
+      host + '__previews{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}' +
+      host + '__preview{display:flex;min-width:0;min-height:82px;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:8px 4px;border:1px solid var(--dsw-alias-label-tertiary);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer}' +
+      host + '__preview[aria-pressed="true"]{border-color:var(--dsw-alias-label-primary)}' +
+      host + '__preview:focus-visible{outline:2px solid var(--dsw-alias-label-primary);outline-offset:2px}' +
+      host + '__preview:disabled{cursor:default;opacity:.6}' +
+      host + '__preview-icon{width:48px;height:48px;flex:none;background:currentColor;forced-color-adjust:none;mask-repeat:no-repeat;mask-size:100% 100%;mask-mode:alpha;-webkit-mask-repeat:no-repeat;-webkit-mask-size:100% 100%;-webkit-mask-mode:alpha}' +
+      host + '__preview-caption{font-size:12px;line-height:16px;text-align:center}' +
       host + '__hint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}'
     );
+    var panels = modeList();
+    for (var i = 0; i < panels.length; i += 1) {
+      var panel = panels[i];
+      if (!panel || !panel.id || Number(panel.count) < 2) continue;
+      var name = PAGE_CLASS + '-preview-' + panel.id.replace(/[^a-zA-Z0-9_-]/g, '-');
+      css += '@keyframes ' + name + '{';
+      for (var frame = 0; frame < Number(panel.count); frame += 1) {
+        css += (frame / Number(panel.count) * 100) + '%{mask-position:0 ' +
+          (frame / (Number(panel.count) - 1) * 100) + '%;-webkit-mask-position:0 ' +
+          (frame / (Number(panel.count) - 1) * 100) + '%}';
+      }
+      css += '100%{mask-position:0 0;-webkit-mask-position:0 0}}' +
+        '@media (prefers-reduced-motion:no-preference){' + host + '__preview-icon[data-sway-preview="' +
+        panel.id + '"]{animation:' + name + ' 1000ms steps(1,end) infinite;-webkit-animation:' +
+        name + ' 1000ms steps(1,end) infinite}}' +
+        '@media (forced-colors:active){' + host + '__preview-icon[data-sway-preview="' +
+        panel.id + '"]{animation:none;-webkit-animation:none}}';
+    }
+    css += '@supports not ((mask-mode:alpha) and (mask-image:url(""))){' + host + '__preview-icon{display:none}}';
+    return css;
   }
 
   /** React, or null when the module table cannot serve it. */
@@ -1634,7 +1663,42 @@
         );
       }
       var children = [head(field, state, props, t, writable)];
-      if (field.control === 'segmented') {
+      if (field.id === 'mode') {
+        var previewTiles = field.options.map(function (option) {
+          var panel = panelForMode(option.value);
+          var dataUrl = panel && panel.base64 ? 'data:image/png;base64,' + panel.base64 : '';
+          var selected = state.text === option.value;
+          return h('button', {
+            key: option.value,
+            type: 'button',
+            className: PAGE_CLASS + '__preview',
+            'aria-pressed': selected,
+            'aria-label': t('field.' + field.id + '.option.' + option.value),
+            disabled: !writable,
+            onClick: function () { props.edit(field.id, option.value); },
+          },
+          h('span', {
+            className: PAGE_CLASS + '__preview-icon',
+            'aria-hidden': true,
+            'data-sway-preview': option.value,
+            style: dataUrl ? {
+              maskImage: 'url("' + dataUrl + '")',
+              WebkitMaskImage: 'url("' + dataUrl + '")',
+              maskSize: '100% ' + (Number(panel.count) * 100) + '%',
+              WebkitMaskSize: '100% ' + (Number(panel.count) * 100) + '%',
+            } : undefined,
+          }),
+          h('span', { className: PAGE_CLASS + '__preview-caption' },
+            t('field.' + field.id + '.option.' + option.value) +
+            (selected ? ' · ' + t('page.previewSelected') : '')));
+        });
+        children.push(h('div', {
+          key: 'control',
+          className: PAGE_CLASS + '__previews',
+          role: 'group',
+          'aria-label': t('field.' + field.id + '.label'),
+        }, previewTiles));
+      } else if (field.control === 'segmented') {
         children.push(
           h(primitives.SegmentedControl, {
             key: 'control',
@@ -1669,7 +1733,8 @@
           ),
         );
       }
-      children.push(h('p', { key: 'hint', className: PAGE_CLASS + '__hint' }, t('field.' + field.id + '.hint')));
+      children.push(h('p', { key: 'hint', className: PAGE_CLASS + '__hint' },
+        t('field.' + field.id + '.hint')));
       return h('div', { key: field.id, className: PAGE_CLASS + '__row' }, children);
     }
 

@@ -100,8 +100,8 @@ var SETTINGS_FIELDS = [
       "en": "Sway style"
     },
     "hint": {
-      "zh": "运行指示器中鲸尾摆动的素材与幅度。",
-      "en": "The artwork and amplitude the whale tail swings with in the running indicator."
+      "zh": "预览以统一速度逐帧播放；选择后保存时生效。",
+      "en": "Previews play frame by frame at one shared speed; the selection takes effect when saved."
     }
   },
   {

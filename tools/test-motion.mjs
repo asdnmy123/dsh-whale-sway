@@ -659,7 +659,7 @@ test('the mode field offers every shipped sway, in every language', () => {
   const field = api.SETTINGS_FIELDS.find((entry) => entry.id === 'mode');
   assert(field !== undefined, 'the configuration must expose the sway mode');
   equal(field.type, 'enum', 'the sway mode is a finite choice');
-  equal(field.control, 'segmented', 'three sways render as one segmented control');
+  equal(field.control, 'segmented', 'the previews keep the shared finite-choice field contract');
   equal(field.values.length, 3, 'all three sways are choices');
   equal(field.default, api.DEFAULT_MODE, 'the default choice is the default sway');
   for (const panel of api.MODE_PANELS) {
@@ -882,7 +882,9 @@ test('the Plugins page is given the configuration, and the document repaints the
   });
   const types = [];
   walkTree(card, (node) => types.push(node.type));
-  assert(types.indexOf('SegmentedControl') !== -1, 'the sway mode renders as a segmented control');
+  const previews = [];
+  walkTree(card, (node) => { if (node.props['data-sway-preview']) previews.push(node); });
+  equal(previews.length, 3, 'every sway mode renders a preview');
   equal(types.filter((type) => type === 'SettingsValueField').length, 7, 'every number field renders a value field');
   equal(types.filter((type) => type === 'Switch').length, 1, 'the enable switch renders once');
   const summary = pluginCard.component({ t: (key) => key, view: 'summary' });
@@ -1063,12 +1065,97 @@ test('settings page renders all controls and shares drafts and actions with plug
   equal(numbers.length, 7, 'all numeric parameters are editable');
   numbers[0].props.onEdit('240');
   numbers[0].props.onReset();
-  const mode = nodes.find((node) => node.type === 'SegmentedControl');
-  mode.props.onChange('sway-vivid');
+  const mode = nodes.find((node) => node.type === 'button' && node.props['aria-label'] === '大摆');
+  mode.props.onClick();
   nodes.find((node) => node.type === 'Switch').props.onChange(false);
   equal(h.primitives.calls.edits.map((edit) => edit.id).join(','), 'minPeriodMs,mode,enabled', 'controls edit their own shared fields');
   equal(h.primitives.calls.resets.join(','), 'minPeriodMs', 'reset stages the field default');
   h.dispose();
+});
+
+/** Read the real configuration component with controllable drafts and permissions. */
+function previewCard({ mode = 'sway', writable = true, locale = 'zh' } = {}) {
+  const snapshot = {
+    state: { available: true, writable, dirty: false, invalid: false, saving: false, failed: false },
+    fields: Object.fromEntries(api.SETTINGS_FIELDS.map((field) => [field.id, {
+      text: String(field.id === 'mode' ? mode : field.default), overridden: false, invalid: false,
+    }])),
+  };
+  const edits = [];
+  let saves = 0;
+  const props = {
+    t: (key) => api.SETTINGS_I18N[locale][key],
+    useWhaleSwayConfig: (select) => select(snapshot),
+    edit: (field, text) => edits.push({ field, text }), resetField() {}, discard() {},
+    save() { saves += 1; },
+  };
+  const Card = api.createConfigCard(fakeReact, fakePrimitives()).ConfigCard;
+  const nodes = [];
+  walkTree(Card(props), (node) => nodes.push(node));
+  return { nodes, edits, get saves() { return saves; } };
+}
+
+test('sway previews use each shipped sprite sheet and expose a single selected choice', () => {
+  for (const panel of api.MODE_PANELS) {
+    const card = previewCard({ mode: panel.id });
+    const icons = card.nodes.filter((node) => node.props['data-sway-preview']);
+    equal(icons.length, 3, 'three separate previews are rendered');
+    for (const icon of icons) {
+      const source = api.panelForMode(icon.props['data-sway-preview']);
+      equal(icon.props['aria-hidden'], true, 'the decorative image does not duplicate the choice label');
+      equal(icon.props.style.maskImage, 'url("data:image/png;base64,' + source.base64 + '")', 'the preview uses the real matching artwork');
+      equal(icon.props.style.WebkitMaskImage, icon.props.style.maskImage, 'WebKit uses the same artwork');
+      equal(icon.props.style.maskSize, '100% ' + source.count * 100 + '%', 'exactly one sprite cell fills the preview');
+    }
+    const buttons = card.nodes.filter((node) => node.type === 'button' && node.props['aria-pressed'] !== undefined);
+    equal(buttons.length, 3, 'all three previews are keyboard-operable buttons');
+    equal(buttons.filter((node) => node.props['aria-pressed']).length, 1, 'only the draft choice is selected');
+    const selected = buttons.find((node) => node.props['aria-pressed']);
+    const selectedIcon = [];
+    walkTree(selected, (node) => { if (node.props['data-sway-preview']) selectedIcon.push(node); });
+    equal(selectedIcon[0].props['data-sway-preview'], panel.id, 'the selected tile follows the draft');
+  }
+});
+
+test('preview selection stages a mode and obeys read-only state in both languages', () => {
+  for (const locale of ['zh', 'en']) {
+    const card = previewCard({ locale });
+    const buttons = card.nodes.filter((node) => node.type === 'button' && node.props['aria-pressed'] !== undefined);
+    const labels = api.SETTINGS_FIELDS.find((field) => field.id === 'mode').options;
+    buttons.forEach((button, index) => {
+      equal(button.props.type, 'button', 'choosing a preview cannot submit the form');
+      equal(button.props['aria-label'], labels[index].label[locale], 'the choice has a localized accessible name');
+      equal(button.props.disabled, false, 'writable forms allow preview selection');
+      button.props.onClick();
+    });
+    equal(card.edits.map((edit) => edit.field).join(','), 'mode,mode,mode', 'previews edit only the mode');
+    equal(card.edits.map((edit) => edit.text).join(','), api.MODE_PANELS.map((panel) => panel.id).join(','), 'each choice stages its own mode');
+    equal(card.saves, 0, 'preview selection leaves persistence to Save');
+    const readOnly = previewCard({ locale, writable: false });
+    const disabled = readOnly.nodes.filter((node) => node.type === 'button' && node.props['aria-pressed'] !== undefined);
+    assert(disabled.every((node) => node.props.disabled), 'read-only forms disable every choice while retaining previews');
+  }
+});
+
+test('preview animation shows every whole sprite cell once per uniform cycle', () => {
+  const css = api.pageCss();
+  for (const panel of api.MODE_PANELS) {
+    const keyframes = 'dsh-whale-sway-config-preview-' + panel.id;
+    const start = css.indexOf('@keyframes ' + keyframes + '{');
+    assert(start >= 0, 'the mode has its own animation: ' + panel.id);
+    const block = css.slice(start, css.indexOf('}}', start) + 2);
+    const stops = [...block.matchAll(/([\d.]+)%\{mask-position:0 ([\d.]+)(?:%|;)/g)];
+    equal(stops.length, panel.count + 1, 'every frame has a stop, plus the loop boundary');
+    stops.slice(0, panel.count).forEach((stop, frame) => {
+      near(Number(stop[1]), frame / panel.count * 100, 1e-8, 'every frame has equal display time');
+      near(Number(stop[2]) / 100 * (panel.count - 1), frame, 1e-8, 'each position lands on a whole sprite cell');
+    });
+    equal(Number(stops.at(-1)[1]), 100, 'loop boundary is at the end');
+    equal(Number(stops.at(-1)[2]), 0, 'loop returns to the first frame');
+    assert(css.includes(keyframes + ' 1000ms steps(1,end) infinite'), 'all previews use the same discrete one-second cycle');
+  }
+  assert(css.includes('@media (prefers-reduced-motion:no-preference)'), 'automatic playback respects reduced-motion preference');
+  assert(css.includes(':focus-visible'), 'keyboard navigation has visible focus');
 });
 
 test('settings contributions disappear on unserve and unload, and return without duplicates', () => {

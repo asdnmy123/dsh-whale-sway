@@ -132,6 +132,8 @@ dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.3.0
 
 摆幅本身不是参数：三种摆动的幅度都是素材原生值，界面只选择使用哪一份素材。
 
+摆动方式以三张鲸尾预览卡片呈现。每张卡片使用对应帧带，在统一的 1 秒周期内逐帧播放，便于直接比较素材的幅度；系统启用减少动态效果时，预览保持静止。点击卡片只暂存选择，按共享表单的「保存」后才写入配置并应用。
+
 页面的控件、校验、保存与「恢复默认」由 `@deepseek-ai/dsh-client-ui-primitives` 的共享设置表单渲染。参数表、取值范围与中英文文案集中在 `tools/settings.mjs`，由 `node tools/sync-settings.mjs` 同时写入 `index.js`（Host 侧 Config schema）与 `client.js`（界面与运行时取值），`--check` 在两者漂移时报错。
 
 ## 摆动方式的实现
@@ -175,7 +177,7 @@ node tools/check-release.mjs     # 发版一致性：pin 版本、tarball 名、
 
 | 检查 | 结果 |
 | --- | --- |
-| 离线测试 `tools/test-motion.mjs` | 33 / 33 通过 |
+| 离线测试 `tools/test-motion.mjs` | 36 / 36 通过 |
 | 帧序列独立验证 `tools/verify-frames.mjs` | 8 / 8 通过（确定性检查 9 / 9） |
 | 运行时独立验证 `tools/verify-motion.mjs` | 7 / 7 通过 |
 | 设置页独立验证 `tools/verify-settings.mjs` | 通过（64 / 64；用部署自带的 `@deepseek-ai/dsh-settings` 投影 Host Config，无部署可解析时跳过） |
