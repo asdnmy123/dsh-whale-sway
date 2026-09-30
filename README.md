@@ -180,7 +180,7 @@ node tools/check-release.mjs     # 发版一致性：pin 版本、tarball 名、
 | 设置页独立验证 `tools/verify-settings.mjs` | 通过（64 / 64；用部署自带的 `@deepseek-ai/dsh-settings` 投影 Host Config，无部署可解析时跳过） |
 | 发布包边界 `tools/check-pack.mjs` | 通过（真实 `npm pack`：仅 6 个运行时文件） |
 | 发版一致性 `tools/check-release.mjs` | 通过（pin 版本、tarball 名、仓库 URL、离线计数） |
-| 持续集成（ubuntu，Node 20） | 8 步全部通过 |
+| 持续集成（ubuntu，Node 20） | 10 步全部通过（设置域复核在无部署的环境按跳过处理） |
 
 两个独立验证器均自带解码与重采样实现，并通过注入缺陷（变换声明、小数帧号、属性未清理、空帧带、错序帧、白底板、过小裁剪、错误素材路径与摘要）确认其检查确实会失败。
 
