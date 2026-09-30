@@ -97,6 +97,7 @@ function loadModule(source) {
     styleWrites: [],
     removed: [],
     styleTags: [],
+    removedStyles: [],
     wall: [],
     warnings: [],
     loaded: null,
@@ -112,6 +113,32 @@ function loadModule(source) {
     closest: () => null,
   };
 
+  /**
+   * A stand-in for one element's inline style declaration: the writes the
+   * controller makes, the read it makes to notice a host a re-render replaced,
+   * and the removals it makes when it stops painting. Every mutation records the
+   * element it happened on, because which element carries the paint properties is
+   * exactly what makes one stylesheet serve three strips.
+   */
+  function createStyle(owner) {
+    const values = new Map();
+    return {
+      values,
+      setProperty(name, value) {
+        const text = String(value);
+        values.set(name, text);
+        state.styleWrites.push({ name, value: text, owner });
+      },
+      getPropertyValue(name) {
+        return values.has(name) ? values.get(name) : '';
+      },
+      removeProperty(name) {
+        values.delete(name);
+        state.removed.push(name);
+      },
+    };
+  }
+
   const icon = {
     isConnected: true,
     closest: (selector) => (selector === '[data-conversation-scroll]' ? host : null),
@@ -124,22 +151,18 @@ function loadModule(source) {
     querySelector: (selector) =>
       selector === '[class*="_runningIcon"]' && icon.missing !== true ? icon : null,
   };
+  icon.style = createStyle('icon');
 
-  const root = {
-    style: {
-      setProperty(name, value) {
-        state.styleWrites.push({ name, value: String(value) });
-      },
-      removeProperty(name) {
-        state.removed.push(name);
-      },
-    },
-  };
+  const root = { style: createStyle('root') };
 
   const head = {
     appendChild(node) {
       node.parentNode = head;
       state.styleTags.push(node);
+    },
+    removeChild(node) {
+      node.parentNode = null;
+      state.removedStyles.push(node);
     },
   };
 
@@ -236,23 +259,45 @@ function loadModule(source) {
     }
   }
 
-  /** Install the plugin the way the shell does. */
-  function install() {
+  /**
+   * Install the plugin the way the shell does.
+   *
+   * @param extra - context members a test adds (services, `inject`, …).
+   * @returns the registered effect callbacks, in the order apply() registered them.
+   */
+  function install(extra) {
     const effects = [];
-    api.apply({
-      effect(fn) {
-        effects.push(fn);
-        state.disposal = fn();
-        return () => {};
-      },
-    });
+    api.apply(
+      Object.assign(
+        {
+          effect(fn) {
+            effects.push(fn);
+            const product = fn();
+            // The first effect is the animation's; later ones (the configuration
+            // page) have their own disposers and must not shadow it.
+            if (state.disposal === null) state.disposal = product;
+            return () => {};
+          },
+        },
+        extra || {},
+      ),
+    );
     return effects;
   }
 
-  const frames = () =>
-    state.styleWrites.filter((write) => write.name === '--dsh-whale-frame').map((write) => write.value);
+  /** Every value written for one paint property, in write order. */
+  const writesOf = (name) =>
+    state.styleWrites.filter((write) => write.name === name).map((write) => write.value);
+  const frames = () => writesOf(api.FRAME_VAR);
+  const offsets = () => writesOf('--' + api.POS_VAR);
 
-  return { api, state, pump, install, frames, host, icon, root };
+  /** The element each paint property was last written on, or null. */
+  function writerOf(name) {
+    const matches = state.styleWrites.filter((write) => write.name === name);
+    return matches.length === 0 ? null : matches[matches.length - 1].owner;
+  }
+
+  return { api, state, pump, install, frames, offsets, writesOf, writerOf, host, icon, root };
 }
 
 // ---------------------------------------------------------------------------
@@ -362,28 +407,37 @@ test('the stylesheet contains no transform of any kind', () => {
   assert(CSS.indexOf('!important') !== -1, 'the override must win against the shipped rules');
 });
 
-test('the stylesheet steps every mode strip by whole cells', () => {
-  for (const panel of api.MODE_PANELS) {
-    const at = CSS.indexOf(panel.base64);
-    assert(at !== -1, 'mode ' + panel.id + ': its strip must appear in the stylesheet');
-    assert(
-      CSS.indexOf('mask-image:url("data:image/png;base64,' + panel.base64) !== -1 ||
-        CSS.indexOf('--dsh-whale-sheet:url("data:image/png;base64,' + panel.base64) !== -1,
-      'mode ' + panel.id + ': the strip must be a mask image',
-    );
-    assert(
-      CSS.indexOf('mask-size:100% ' + panel.count * 100 + '%') !== -1,
-      'mode ' + panel.id + ': the mask must hold every cell',
-    );
-    assert(
-      CSS.indexOf('mask-position:0 calc(var(' + api.FRAME_VAR + ',0) / ' + (panel.count - 1) + ' * 100%)') !== -1,
-      'mode ' + panel.id + ': mask-position must be driven by the integer frame property',
-    );
-  }
-  assert(CSS.indexOf('mask-mode:alpha') !== -1, 'the strip is an alpha mask');
-  assert(CSS.indexOf('mask-image:var(--dsh-whale-sheet)') !== -1, 'the mask reads the selected mode sheet');
-  assert(CSS.indexOf('-webkit-mask-image:var(--dsh-whale-sheet)') !== -1, 'the -webkit twin is required');
+test('the stylesheet is one mode-independent rule driven by the paint properties', () => {
+  const sheet = '--' + api.SHEET_VAR;
+  const cells = '--' + api.CELLS_VAR;
+  const position = '--' + api.POS_VAR;
+  assert(CSS.indexOf('mask-image:var(' + sheet + ')') !== -1, 'the mask reads the selected strip');
+  assert(CSS.indexOf('-webkit-mask-image:var(' + sheet + ')') !== -1, 'the -webkit twin is required');
+  assert(
+    CSS.indexOf('mask-size:100% calc(var(' + cells + ',' + COUNT + ') * 100%)') !== -1,
+    'the mask height is the active strip cell count',
+  );
+  assert(CSS.indexOf('mask-position:0 var(' + position + ',0%)') !== -1, 'the mask position reads the loop percentage');
   assert(CSS.indexOf('-webkit-mask-position') !== -1, 'the -webkit position twin is required');
+  assert(CSS.indexOf('mask-mode:alpha') !== -1, 'the strip is an alpha mask');
+  // Exactly one strip is inlined, and it is the default mode's. One inlined strip
+  // is the whole point of the mode-independent rule; the default one is what
+  // makes the first painted frame correct before the configuration is read.
+  const inlined = api.MODE_PANELS.filter((panel) => CSS.indexOf(panel.base64) !== -1);
+  equal(inlined.length, 1, 'exactly one strip may be inlined in the stylesheet');
+  equal(inlined[0].id, api.DEFAULT_MODE, "the inlined strip is the default mode's");
+});
+
+test('all three sways are embedded and selectable at runtime', () => {
+  equal(api.MODE_PANELS.length, 3, 'all three sways must be spliced');
+  const ids = api.MODE_PANELS.map((panel) => panel.id);
+  for (const id of ['sway', 'sway-gentle', 'sway-vivid']) {
+    assert(ids.indexOf(id) !== -1, 'missing sway ' + id + ' (have ' + ids.join(', ') + ')');
+    const panel = api.panelForMode(id);
+    equal(panel.id, id, 'panelForMode must resolve ' + id);
+    assert(panel.base64.length > 1000, id + ': its strip must be embedded, not a placeholder');
+  }
+  equal(api.panelForMode('no-such-sway').id, api.DEFAULT_MODE, 'an unknown mode falls back to the default sway');
 });
 
 test('every registered sway mode is spliced with a matching strip and cell count', () => {
@@ -441,19 +495,34 @@ test('the module registers itself with the loader', () => {
 // the loop
 // ---------------------------------------------------------------------------
 
-test('the loop writes whole frames and nothing else', () => {
+test('the loop writes whole frames and the offset, and nothing else', () => {
   const harness = loadModule(SOURCE);
   harness.install();
   harness.pump(4, 40);
   const writes = harness.frames();
   assert(writes.length > 20, 'expected a steady stream of frame changes, got ' + writes.length);
   const names = Array.from(new Set(harness.state.styleWrites.map((write) => write.name)));
-  equal(names.join(','), api.FRAME_VAR, 'the loop may only write the frame property');
+  // Per frame: the integer index and the finished percentage. Once per mode: the
+  // strip, its cell count, and its mode id. Nothing else may reach the style
+  // engine — no transform, no geometry, no interpolated pose.
+  const allowed = [api.FRAME_VAR, '--' + api.POS_VAR, '--' + api.SHEET_VAR, '--' + api.CELLS_VAR, api.MODE_VAR].sort();
+  equal(names.slice().sort().join(','), allowed.join(','), 'unexpected style writes: ' + names.join(', '));
   for (const value of writes) {
     assert(/^\d+$/.test(value), 'frame value must be a whole number, got ' + value);
     const index = Number(value);
     assert(index >= 0 && index < COUNT, 'frame out of range: ' + value);
   }
+  const positions = harness.state.styleWrites
+    .filter((write) => write.name === '--' + api.POS_VAR)
+    .map((write) => write.value);
+  equal(positions.length, writes.length, 'every frame change carries its strip offset');
+  for (const value of positions) {
+    assert(/^\d+(\.\d+)?%$/.test(value), 'offset must be a percentage, got ' + value);
+  }
+  assert(
+    harness.state.styleWrites.every((write) => write.owner === 'icon'),
+    'the paint properties belong on the indicator element, not on <html>',
+  );
 });
 
 test('the tail wags through the whole strip', () => {
@@ -560,6 +629,311 @@ test('apply tags its stylesheet like a shipped bundle', () => {
 });
 
 // ---------------------------------------------------------------------------
+// the configuration contract
+// ---------------------------------------------------------------------------
+
+const settings = await import(pathToFileURL(resolve(ROOT, 'tools/settings.mjs')).href);
+
+test('the spliced settings contract is tools/settings.mjs, verbatim', () => {
+  equal(
+    JSON.stringify(api.SETTINGS_FIELDS),
+    JSON.stringify(settings.SETTINGS_FIELDS),
+    'the field table in client.js must be the registry table',
+  );
+  equal(
+    JSON.stringify(api.SETTINGS_GROUPS),
+    JSON.stringify(settings.SETTINGS_GROUPS),
+    'the group table in client.js must be the registry table',
+  );
+  equal(
+    JSON.stringify(api.SETTINGS_I18N),
+    JSON.stringify(settings.settingsDictionary()),
+    'the dictionary in client.js must be the registry dictionary',
+  );
+  equal(api.SETTINGS_NS, settings.SETTINGS_NAMESPACE, 'the settings namespace is the package name');
+  equal(api.ROW_CONFIG_KEY, settings.SETTINGS_NAMESPACE + '#' + settings.SETTINGS_NAMESPACE, 'the row key is <package>#<row>');
+  equal(api.BUNDLE_CONFIG_KEY, settings.SETTINGS_NAMESPACE, 'the bundle key is the package name');
+});
+
+test('the mode field offers every shipped sway, in every language', () => {
+  const field = api.SETTINGS_FIELDS.find((entry) => entry.id === 'mode');
+  assert(field !== undefined, 'the configuration must expose the sway mode');
+  equal(field.type, 'enum', 'the sway mode is a finite choice');
+  equal(field.control, 'segmented', 'three sways render as one segmented control');
+  equal(field.values.length, 3, 'all three sways are choices');
+  equal(field.default, api.DEFAULT_MODE, 'the default choice is the default sway');
+  for (const panel of api.MODE_PANELS) {
+    assert(field.values.indexOf(panel.id) !== -1, panel.id + ' must be selectable');
+    assert(api.SETTINGS_I18N.zh['field.mode.option.' + panel.id] !== undefined, panel.id + ' needs a Chinese segment label');
+    assert(api.SETTINGS_I18N.en['field.mode.option.' + panel.id] !== undefined, panel.id + ' needs an English segment label');
+  }
+  for (const locale of ['zh', 'en']) {
+    for (const key of Object.keys(api.SETTINGS_I18N[locale])) {
+      const text = api.SETTINGS_I18N[locale][key];
+      assert(typeof text === 'string' && text.length > 0, locale + ' ' + key + ' must carry copy');
+      // Official voice: no second person, in either language.
+      assert(!/你|您|your\b/i.test(text), locale + ' ' + key + ' must not address a reader: ' + text);
+    }
+  }
+});
+
+test('normalizeConfig accepts the document, clamps numbers, and defaults the rest', () => {
+  const defaults = api.defaultConfig();
+  equal(
+    Object.keys(defaults).sort().join(','),
+    api.SETTINGS_FIELDS.map((field) => field.id).sort().join(','),
+    'one default per field',
+  );
+  equal(defaults.mode, api.DEFAULT_MODE, 'the default sway');
+  equal(defaults.enabled, true, 'the animation is on out of the box');
+  const dirty = api.normalizeConfig({
+    mode: 'sway-vivid',
+    enabled: false,
+    minPeriodMs: -100,
+    maxPeriodMs: 1e9,
+    charsPerToken: '2.5',
+    sampleMs: 'nonsense',
+    unknown: 7,
+  });
+  equal(dirty.mode, 'sway-vivid', 'a declared sway is kept');
+  equal(dirty.enabled, false, 'a boolean is kept');
+  equal(dirty.minPeriodMs, 60, 'a number below its bound is clamped to the bound');
+  equal(dirty.maxPeriodMs, 10000, 'a number above its bound is clamped to the bound');
+  equal(dirty.charsPerToken, 2.5, 'a numeric string is accepted');
+  equal(dirty.sampleMs, defaults.sampleMs, 'an unparsable value falls back to the default');
+  equal(dirty.unknown, undefined, 'unknown keys never reach the runtime');
+  equal(JSON.stringify(api.normalizeConfig(null)), JSON.stringify(defaults), 'a missing document yields the defaults');
+  equal(api.normalizeConfig({ mode: 'sway-nope' }).mode, api.DEFAULT_MODE, 'an unknown sway falls back to the default');
+  const inverted = api.normalizeConfig({ minPeriodMs: 900, maxPeriodMs: 300 });
+  assert(inverted.maxPeriodMs >= inverted.minPeriodMs, 'an inverted interval is repaired');
+});
+
+/**
+ * A minimal React: enough for the configuration card's element tree, and small
+ * enough that a test reads what the card asked to render rather than a DOM.
+ */
+const fakeReact = {
+  createElement(type, props, ...children) {
+    return { type, props: props === null || props === undefined ? {} : props, children };
+  },
+};
+
+/**
+ * A stand-in for `@deepseek-ai/dsh-client-ui-primitives`: the staged form model,
+ * the shipped numeric field spec, and name-only stubs for the controls, so a
+ * test can assert exactly what the page contributed and what it renders.
+ */
+function fakePrimitives() {
+  const calls = { edits: [], resets: [] };
+  class SettingsFormModel {
+    constructor(scope, specs) {
+      this.scope = scope;
+      this.specs = specs;
+    }
+    shell() {
+      return { available: true, writable: true, dirty: false, invalid: false, saving: false, failed: false };
+    }
+    field(id) {
+      const value = this.scope.getSnapshot().value;
+      return { text: String(value === undefined ? '' : value[id]), overridden: false, invalid: false };
+    }
+    bind(project) {
+      return { getSnapshot: project, subscribe: () => () => {} };
+    }
+    actions() {
+      return {
+        edit: (id, text) => calls.edits.push({ id, text }),
+        resetField: (id) => calls.resets.push(id),
+        save: () => {},
+        discard: () => {},
+      };
+    }
+    dispose() {}
+  }
+  return {
+    calls,
+    SettingsFormModel,
+    settingsNumberField: (field) => ({
+      field,
+      format: (value) => String(value),
+      parse: (text) => ({ kind: 'set', value: Number(text) }),
+    }),
+    SettingsForm: 'SettingsForm',
+    SettingsValueField: 'SettingsValueField',
+    SegmentedControl: 'SegmentedControl',
+    Switch: 'Switch',
+  };
+}
+
+/** Visit every element node in a fake-React tree. */
+function walkTree(node, visit) {
+  if (node === null || node === undefined) return;
+  if (Array.isArray(node)) {
+    for (const item of node) walkTree(item, visit);
+    return;
+  }
+  if (typeof node !== 'object') return;
+  visit(node);
+  for (const child of node.children || []) walkTree(child, visit);
+}
+
+test('the Plugins page is given the configuration, and the document repaints the sway', () => {
+  const harness = loadModule(SOURCE);
+  const primitives = fakePrimitives();
+  harness.api.setModuleRequire((specifier) => {
+    if (specifier === 'react') return fakeReact;
+    if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return primitives;
+    throw new Error('unexpected require: ' + specifier);
+  });
+
+  const registrations = [];
+  const dictionaries = [];
+  const listeners = [];
+  let documentValue = { mode: 'sway-vivid', enabled: true };
+  const scope = {
+    getSnapshot: () => ({
+      status: 'ready',
+      value: documentValue,
+      base: {},
+      user: documentValue,
+      revision: 1,
+      writable: true,
+      mode: 'host',
+    }),
+    subscribe(listener) {
+      listeners.push(listener);
+      return () => {};
+    },
+    mutate: async () => true,
+    set: async () => true,
+    unset: async () => true,
+  };
+  const scoped = {
+    locale: {
+      bind: () => (key) => key,
+      register(namespace, dictionary) {
+        dictionaries.push({ namespace, dictionary });
+        return () => {};
+      },
+    },
+    slots: {
+      inject(slot, callback) {
+        callback();
+        return () => {};
+      },
+      register(options, component) {
+        registrations.push({ options, component });
+        return () => {};
+      },
+    },
+    configForms: { get: () => scope, whileServed: (namespaces, register) => register() },
+  };
+
+  const effects = [];
+  harness.api.apply({
+    effect(fn) {
+      effects.push(fn);
+      return () => {};
+    },
+    inject(deps, callback) {
+      callback(scoped);
+      return { dispose() {} };
+    },
+  });
+  for (const fn of effects) fn();
+
+  equal(registrations.length, 2, 'the configuration must reach both Plugins-page seats');
+  const keys = registrations.map((entry) => entry.options.key).sort();
+  equal(
+    keys.join(','),
+    [harness.api.BUNDLE_CONFIG_KEY, harness.api.ROW_CONFIG_KEY].sort().join(','),
+    'the keys are the package name and <package>#<row>',
+  );
+  for (const entry of registrations) {
+    assert(
+      entry.options.name === 'plugins.bundle.config' || entry.options.name === 'plugins.row.config',
+      'registered on a Plugins-page configuration slot, got ' + entry.options.name,
+    );
+    equal(entry.options.locale, harness.api.SETTINGS_NS, 'the page owns the plugin dictionary');
+    equal(typeof entry.component, 'function', 'the slot carries a component');
+  }
+  equal(dictionaries.length, 1, 'exactly one dictionary is registered');
+  equal(dictionaries[0].namespace, harness.api.SETTINGS_NS, 'the dictionary namespace is the plugin');
+  equal(
+    JSON.stringify(dictionaries[0].dictionary),
+    JSON.stringify(harness.api.SETTINGS_I18N),
+    'the registered dictionary is the generated one',
+  );
+
+  const face = registrations[0].options.inject();
+  const projection = face.hooks.whaleSwayConfig.getSnapshot();
+  equal(projection.fields.mode.text, 'sway-vivid', 'the staged mode is the document\'s mode');
+  equal(projection.state.available, true, 'the form is available while the Host serves the namespace');
+
+  const card = registrations[0].component({
+    t: (key) => key,
+    view: 'page',
+    useWhaleSwayConfig: (select) => select(projection),
+    edit: face.edit,
+    resetField: face.resetField,
+    save: face.save,
+    discard: face.discard,
+  });
+  const types = [];
+  walkTree(card, (node) => types.push(node.type));
+  assert(types.indexOf('SegmentedControl') !== -1, 'the sway mode renders as a segmented control');
+  equal(types.filter((type) => type === 'SettingsValueField').length, 7, 'every number field renders a value field');
+  equal(types.filter((type) => type === 'Switch').length, 1, 'the enable switch renders once');
+  const summary = registrations[0].component({ t: (key) => key, view: 'summary' });
+  equal(summary, 'page.summary', 'the summary view is the row\'s one-liner');
+
+  // The document selects a sway: the icon must carry that mode's own strip.
+  harness.pump(1, 40);
+  const sheets = () => harness.state.styleWrites.filter((write) => write.name === '--' + harness.api.SHEET_VAR);
+  assert(sheets().length >= 1, 'the configured sway must be written onto the icon');
+  // The LAST write is the one under test: the plugin paints its own default the
+  // moment it applies, and adopts the document as soon as the settings mirror
+  // reports one, so the first write is the default sway by construction.
+  equal(
+    sheets()[sheets().length - 1].value.indexOf(harness.api.panelForMode('sway-vivid').base64) !== -1,
+    true,
+    'the inline strip is the configured mode\'s',
+  );
+
+  // Changing the mode repaints without a reload.
+  documentValue = { mode: 'sway-gentle', enabled: true };
+  for (const listener of listeners.slice()) listener();
+  assert(sheets().length >= 2, 'a mode change rewrites the strip');
+  equal(
+    sheets()[sheets().length - 1].value.indexOf(harness.api.panelForMode('sway-gentle').base64) !== -1,
+    true,
+    'the rewritten strip is the new mode\'s',
+  );
+
+  // Switching the animation off restores the shipped indicator: the animation
+  // stylesheet goes away with it, because that stylesheet is what hides the
+  // shipped mark. The configuration page keeps its own stylesheet, so the page
+  // still renders while the animation is off.
+  const attached = () => harness.state.styleTags.filter((tag) => tag.parentNode !== null);
+  documentValue = { mode: 'sway-gentle', enabled: false };
+  for (const listener of listeners.slice()) listener();
+  equal(attached().length, 1, 'only the configuration page stylesheet may survive a disable');
+  equal(attached()[0].dataset.pluginCss, harness.api.PAGE_CSS_TAG, 'the survivor is the page stylesheet');
+  const framesWhileDisabled = harness.frames().length;
+  harness.pump(1, 40);
+  equal(harness.frames().length, framesWhileDisabled, 'the loop stays parked while the animation is off');
+
+  // ... and switching it back on reinstalls the animation stylesheet.
+  documentValue = { mode: 'sway', enabled: true };
+  for (const listener of listeners.slice()) listener();
+  equal(attached().length, 2, 'enabling reinstalls the animation stylesheet');
+  assert(
+    attached().some((tag) => tag.dataset.pluginCss === harness.api.CSS_TAG),
+    'the reinstalled stylesheet is the animation one',
+  );
+});
+
+// ---------------------------------------------------------------------------
 // the host half
 // ---------------------------------------------------------------------------
 
@@ -574,7 +948,7 @@ test('the host half declares the plugin without a runtime dependency', () => {
 test('package.json ships both halves and keeps the toolchain out of the tarball', () => {
   const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8'));
   equal(pkg.name, 'dsh-whale-sway', 'package name');
-  assert(/^0\.2\./.test(pkg.version), 'the frame-stepping rewrite is a 0.2.x release, got ' + pkg.version);
+  assert(/^0\.3\./.test(pkg.version), 'the configuration interface is a 0.3.x release, got ' + pkg.version);
   assert(pkg.files.indexOf('client.js') !== -1, 'client.js must ship');
   assert(pkg.files.indexOf('index.js') !== -1, 'index.js must ship');
   assert(pkg.files.indexOf('cordis.patch.yml') !== -1, 'cordis.patch.yml must ship');

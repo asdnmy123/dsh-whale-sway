@@ -8,7 +8,7 @@
 # itself is bare: no config, no services, no build step.
 #
 # Install, one command (see the README "安装" section):
-#   dsh plugin --profile <profile> add github:asdnmy123/dsh-whale-sway#v0.2.0
+#   dsh plugin --profile <profile> add github:asdnmy123/dsh-whale-sway#v0.3.0
 # from a local checkout instead:
 #   dsh plugin --profile <profile> add link:<absolute path to this directory>
 # of a published copy (shorter still):

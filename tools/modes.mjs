@@ -39,6 +39,9 @@ export const MODES = [
     id: 'sway',
     label: '摆动（原始幅度）',
     labelEn: 'sway (as drawn)',
+    /** Segment copy for the settings page, where a whole line per mode is too wide. */
+    shortLabel: '原生',
+    shortLabelEn: 'As drawn',
     inkRgb: INK_RGB,
     /** All 24 cells differ: this material's wag is asymmetric. */
     expectDistinct: 24,
@@ -52,6 +55,9 @@ export const MODES = [
     id: 'sway-gentle',
     label: '摆动（小幅）',
     labelEn: 'sway (gentle)',
+    /** Segment copy for the settings page, where a whole line per mode is too wide. */
+    shortLabel: '轻摆',
+    shortLabelEn: 'Gentle',
     inkRgb: INK_RGB,
     /** Mirror-symmetric wag: the second half repeats the first at cell 32. */
     expectDistinct: 12,
@@ -65,6 +71,9 @@ export const MODES = [
     id: 'sway-vivid',
     label: '摆动（大幅）',
     labelEn: 'sway (vivid)',
+    /** Segment copy for the settings page, where a whole line per mode is too wide. */
+    shortLabel: '大摆',
+    shortLabelEn: 'Vivid',
     inkRgb: INK_RGB,
     /**
      * Mirror-symmetric wag, and a little more compact than gentle's: measured at

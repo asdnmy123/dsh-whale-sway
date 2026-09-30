@@ -311,11 +311,24 @@ function insideBlock(blocks, index) {
   return blocks.find((block) => block.open < index && index < block.close) || null;
 }
 
-/** true when a `mask-size` value maps exactly one sheet cell onto the box. */
+/**
+ * true when a `mask-size` value maps exactly one sheet cell onto the box.
+ *
+ * Two shapes are legal. A single-mode build writes the literal product
+ * (`100% 2400%`). The shipped multi-mode build writes the arithmetic form
+ * `100% calc(var(--dsh-whale-cells,24) * 100%)`, because the active strip's cell
+ * count arrives as a custom property the runtime writes on the icon element; the
+ * declaration is accepted when it multiplies 100% by a cells property whose
+ * fallback is this build's own cell count.
+ */
 function maskSizeMatchesCount(value, count) {
   const compact = String(value).replace(/\s+/g, '');
   if (compact.includes(`${count * 100}%`)) return true;
   if (compact.includes(`calc(${count}*100%)`)) return true;
+  if (compact.includes('*100%') && /var\(\s*--[a-z0-9-]*cells/i.test(compact)) {
+    const declared = [...compact.matchAll(/\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
+    if (declared.includes(count)) return true;
+  }
   const numbers = [...compact.matchAll(/(\d+(?:\.\d+)?)%/g)].map((m) => Number(m[1]));
   const calcNumbers = [...compact.matchAll(/calc\(([^)]*)\)/g)].map((m) => m[1]);
   if (numbers.includes(count * 100)) return true;
@@ -643,16 +656,23 @@ check('2', 'FRAME-SELECTION motion (integer frame property, monotone, rate-scale
   // (e) the emitted CSS must point at the spliced sheet data URL.
   assert(liveCss !== null && liveCss.length > 0, 'no emitted CSS (empty stylesheet)');
   assert(/data:image\/png;base64,/i.test(liveCss), 'emitted CSS has no PNG data URL');
-  // With several sways spliced, the stylesheet must carry exactly one payload per
-  // registered mode — no more (a duplicate or an unregistered sheet is a bug) and
-  // no fewer (a mode that silently paints nothing). The set is compared against
-  // the modes' own sheet files, with the manifest's hash as a third opinion.
+  // The stylesheet inlines exactly ONE strip, because the mask rule is
+  // mode-independent: the active sway reaches it as the inline custom property
+  // the runtime writes, so a second inlined payload would mean a per-mode rule
+  // set came back and the cascade — not the configuration — would decide the
+  // sway. Every registered mode must still be embedded in the module itself,
+  // which is what lets one stylesheet serve all three.
   const payloads = cssSheetPayloads(liveCss);
   assert(payloads.length > 0, 'emitted CSS has no sheet payload');
   assert(
-    modePayloads.length === 0 || payloads.length === modePayloads.length,
-    `emitted CSS carries ${payloads.length} distinct sheet payload(s), but the manifest registers ` +
-      `${modePayloads.length} mode(s): ${manifestModes.map((m) => m.id).join(', ')}`,
+    payloads.length === 1,
+    `emitted CSS carries ${payloads.length} distinct sheet payload(s); the mode-independent rule inlines exactly one`,
+  );
+  const embedded = modePayloads.filter((entry) => entry.base64 !== undefined && clientSource.includes(entry.base64));
+  assert(
+    modePayloads.length === 0 || embedded.length === modePayloads.length,
+    `${modePayloads.length - embedded.length} of ${modePayloads.length} registered mode(s) are not embedded in client.js: ` +
+      `${manifestModes.map((mode) => mode.id).join(', ')}`,
   );
   const expectedSet = new Set(modePayloads.map((entry) => entry.base64));
   if (expectedSet.size > 0) {
@@ -805,14 +825,15 @@ check('4', 'SHEET-INTEGRITY (base64 == frames-sheet.png, count == cells, mask-si
     `no mask-size equals count*100% (${frameCount * 100}%): got ${sizeValues.map((v) => JSON.stringify(v)).join(', ')}`,
   );
 
-  // mask-position must be driven by the frame custom property only.
+  // mask-position must be driven by a property the loop writes, and by nothing
+  // else: the integer frame index or the finished percentage it derives from it.
   const posValues = [...liveCss.matchAll(/mask-position\s*:\s*([^;}]+)/gi)].map((m) => m[1].trim());
   measurements.maskPositionValues = posValues;
   assert(posValues.length > 0, 'the emitted CSS has no mask-position declaration');
-  const driven = posValues.filter((value) => /var\(\s*--dsh-whale-frame\b/i.test(value));
+  const driven = posValues.filter((value) => /var\(\s*--dsh-whale-(?:frame|pos)\b/i.test(value));
   assert(
     driven.length >= 1,
-    `mask-position is not driven by --dsh-whale-frame: ${posValues.map((v) => JSON.stringify(v)).join(', ')}`,
+    `mask-position is not driven by the loop's own property: ${posValues.map((v) => JSON.stringify(v)).join(', ')}`,
   );
 
   if (framesJson !== null && !framesJson.__parseError) {
@@ -1016,8 +1037,12 @@ check('7', 'GATES (reduced-motion, forced-colors, @supports)', () => {
   assert(maskIndex >= 0, 'no data-URL mask-image rule to gate (the stylesheet must paint the sheet)');
   const sheetVarData = css.search(/--[a-z-]*(?:sheet|strip|mask)[a-z-]*\s*:\s*url\(\s*["']?data:image\/png;base64,/i);
   assert(sheetVarData >= 0, 'the sheet custom property does not carry a PNG data URL');
-  const frameIndex = css.search(/var\(\s*--dsh-whale-frame\b/i);
-  assert(frameIndex >= 0, 'no --dsh-whale-frame usage to gate');
+  // The offset rule reads the property the loop writes for the current cell. A
+  // single-mode build computed it in CSS from the integer frame index; the
+  // mode-independent build reads the finished percentage, because the divisor is
+  // the active strip's cell count. Either property is the same paint.
+  const frameIndex = css.search(/var\(\s*--dsh-whale-(?:frame|pos)\b/i);
+  assert(frameIndex >= 0, 'no --dsh-whale-frame/--dsh-whale-pos usage to gate');
 
   const maskSupports = insideBlock(supportsBlocks, maskIndex);
   const frameSupports = insideBlock(supportsBlocks, frameIndex);

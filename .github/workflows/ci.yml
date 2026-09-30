@@ -1,12 +1,15 @@
 # The plugin has no build step and no runtime dependency, so every check here is
 # one `node` command. What the chain proves, in order:
 #
-#   1. `tools/build-frames.mjs` regenerates the sprite sheet and its metadata from
-#      the source artwork byte-for-byte, and `git diff --exit-code` fails the job
-#      if a single byte moved. The committed frames therefore provably come from
-#      `preview/2C42C558D17C2745D1D47ED3DE000BD2.gif`, which the repo ships.
-#   2. `tools/sync-sheet.mjs --check` proves the sheet inlined in `client.js` is
-#      that exact artifact and not a stale copy from an earlier crop.
+#   1. `tools/build-assets.mjs` regenerates every sprite sheet and its metadata
+#      from the source artwork byte-for-byte, and `git diff --exit-code` fails the
+#      job if a single byte moved. The committed sheets therefore provably come
+#      from the three GIFs in `preview/`, which the repo ships.
+#   2. `tools/sync-sheet.mjs --check` proves the strips inlined in `client.js` are
+#      those exact artifacts and not stale copies, and `tools/sync-settings.mjs
+#      --check` proves the parameter table in `index.js` (the Host Config schema)
+#      and in `client.js` (the settings page and the runtime's own defaults) is
+#      `tools/settings.mjs` verbatim.
 #   3. `tools/test-motion.mjs` loads the real `client.js` through the browser module
 #      loader's own handshake inside `node:vm` (which also proves the file parses),
 #      exercises the pure motion maths and the stylesheet builder, runs `apply()`
@@ -58,11 +61,20 @@ jobs:
       - name: the sheets inlined in client.js are those exact artifacts
         run: node tools/sync-sheet.mjs --check
 
+      - name: the settings contract in both halves is tools/settings.mjs
+        run: node tools/sync-settings.mjs --check
+
       - name: offline engine tests
         run: node tools/test-motion.mjs
 
       - name: verify the motion (frame selection, zero transform)
         run: node tools/verify-motion.mjs
+
+      # Needs a deployment that ships @deepseek-ai/dsh-settings, which a CI
+      # runner does not have: the tool reports a skip and exits 0 there, and
+      # proves the projection on any machine that runs DSH.
+      - name: the deployment's own settings domain projects the plugin's form
+        run: node tools/verify-settings.mjs
 
       - name: the README previews regenerate byte-identically
         run: |

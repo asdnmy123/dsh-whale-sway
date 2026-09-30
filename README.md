@@ -64,7 +64,7 @@ mask-position: 0 calc(var(--dsh-whale-frame, 0) / 23 * 100%);   /* 整格位移 
 | 45 tok/s | 250 ms | 快速摆动 |
 | ≥ 160 tok/s | 190 ms | 达到周期下限 |
 
-周期公式：`clamp(1500 / (1 + rate / 9), 190, 1500)` ms。
+周期公式：`clamp(maxPeriodMs / (1 + rate / rateRef), minPeriodMs, maxPeriodMs)` ms。上表为出厂默认值，公式中的四个量与取样参数都可在插件配置界面按部署调整。
 
 ## 运动规格
 
@@ -90,7 +90,7 @@ mask-position: 0 calc(var(--dsh-whale-frame, 0) / 23 * 100%);   /* 整格位移 
 一条指令完成（无需克隆仓库、无需编辑任何配置、无需构建）：
 
 ```powershell
-dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.2.0
+dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.3.0
 ```
 
 `--profile` 不是固定值：桌面版是 `desktop`，其他组合（`web`、`tui`、自建 profile）换成对应名称即可。该命令把本包登记为该 profile 的依赖，并把本插件追加进 `dsh.profile.bundles`；profile 不存在时自动初始化。执行后刷新页面或重启 DSH 即生效。
@@ -99,39 +99,43 @@ dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.2.0
 
 | 目的 | 把 spec 换成 |
 | --- | --- |
-| 固定版本（推荐，供应链安全） | `github:asdnmy123/dsh-whale-sway#v0.2.0` |
+| 固定版本（推荐，供应链安全） | `github:asdnmy123/dsh-whale-sway#v0.3.0` |
 | 跟随 `main` 最新提交 | `github:asdnmy123/dsh-whale-sway` |
 | 装本地检出（改完即生效，开发用） | `link:<本目录绝对路径>`（例 `link:D:/path/to/dsh-whale-sway`、`link:/home/you/dsh-whale-sway`） |
-| 无网络 / 内网环境 | `./dsh-whale-sway-0.2.0.tgz`（`npm pack` 产物约 25.6 KiB，在调用目录解析相对路径，不经过 git，也不需要访问 GitHub） |
+| 无网络 / 内网环境 | `./dsh-whale-sway-0.3.0.tgz`（`npm pack` 产物约 75.4 KiB，在调用目录解析相对路径，不经过 git，也不需要访问 GitHub） |
 
 图形界面：设置 → 插件 页面可启用、停用、卸载已安装的 bundle；安装新的 spec 用上面那条命令，或在会话中直接要求执行。
 
 本包随仓库即产物：`client.js` 已内联帧带与样式表，包内没有 `prepare`/`build` 脚本，因此 git 安装不需要任何 pnpm 构建许可，安装期也不会执行包内代码（实测无提示、无 allowlist）。若本包发布到 npm 注册表，命令可再缩短为 `dsh plugin --profile desktop add dsh-whale-sway`。
 
-## 配置
+## 插件配置界面
 
-`client.js` 顶部的 `TUNING`：
+本插件在 DSH 的「设置 → 插件」页面提供配置界面。改动写入该 Loader 条目的 `config`，由 DSH 的 settings 域持久化到当前 profile 的 `cordis.patch.yml`，因此跨重启保留，并在保存后立即作用于正在运行的动画（`patchReload: live`）。
 
-| 键 | 含义 | 默认值 |
-| --- | --- | --- |
-| `minPeriodMs` | 周期下限（满速） | `190` |
-| `maxPeriodMs` | 周期上限（空闲） | `1500` |
-| `rateRef` | 使周期减半的 tok/s | `9` |
-| `charsPerToken` | 每 token 字符数（中文 1.7，英文约 4） | `1.7` |
-| `sampleMs` | 采样窗口 | `200` |
-| `smooth` | EMA 权重 | `0.4` |
+入口有两处，指向同一个表单：
 
-摆幅不提供运行时参数：其数值即帧序列的原始幅度。
+- 插件 bundle 详情页（插件列表中的 `dsh-whale-sway` 卡片）内嵌的配置区；
+- 该 bundle 下 `dsh-whale-sway` 条目页的配置区。
 
-## 选择摆动方式
+| 参数 | 含义 | 默认值 | 取值范围 |
+| --- | --- | --- | --- |
+| 摆动方式 | 动画使用的素材与摆幅：原生 / 轻摆 / 大摆 | `sway`（原生） | 三选一 |
+| 启用动画 | 关闭后恢复出厂运行指示器画面 | 开启 | 开关 |
+| 最快周期（毫秒） | 峰值速率下整轮摆动的时长 | `190` | 60 – 5000 |
+| 最慢周期（毫秒） | 空闲或等待工具调用时的整轮时长 | `1500` | 120 – 10000 |
+| 参考速率（tok/s） | 速率达到该值时整轮时长减半 | `9` | 1 – 400 |
+| 速率上限（tok/s） | 估算速率的上限，避免批量重排把摆动拉到极端 | `160` | 1 – 100000 |
+| 每 token 字符数 | 由文本增量估算 token 速率的换算系数 | `1.7` | 0.1 – 20 |
+| 取样间隔（毫秒） | 两次文本长度观测之间的间隔 | `200` | 20 – 5000 |
+| 平滑系数 | 每次新观测计入当前速率的权重 | `0.4` | 0.05 – 1 |
 
-三种摆动的幅度都是素材原生值，切换只改一个 CSS 自定义属性，不触发任何形变、重采样或重新布局：
+摆幅本身不是参数：三种摆动的幅度都是素材原生值，界面只选择使用哪一份素材。
 
-```css
---dsh-whale-mode: "sway-gentle";   /* 缺省即 sway（原始幅度） */
-```
+页面的控件、校验、保存与「恢复默认」由 `@deepseek-ai/dsh-client-ui-primitives` 的共享设置表单渲染。参数表、取值范围与中英文文案集中在 `tools/settings.mjs`，由 `node tools/sync-settings.mjs` 同时写入 `index.js`（Host 侧 Config schema）与 `client.js`（界面与运行时取值），`--check` 在两者漂移时报错。
 
-`client.js` 为每种摆动各注入一组规则（各自一张 `mask-image`、各自的 `mask-size`/`mask-position`），由 `var(--dsh-whale-mode)` 选出当前生效的一组；动画循环本身完全不需要知道模式的存在。可用的模式 id 见 `tools/generated/manifest.json` 的 `modeIds`。
+## 摆动方式的实现
+
+三种素材同时内联在 `client.js` 的 `MODE_PANELS` 中。样式表只含**一条与模式无关**的遮罩规则，读三个自定义属性：帧带 `--dsh-whale-sheet`、格数 `--dsh-whale-cells`、帧内偏移 `--dsh-whale-pos`。运行时把当前模式的帧带与格数以**内联样式**写在图标元素上（内联优先于样式表），此后每个换帧只更新 `--dsh-whale-frame`（整数帧号）与 `--dsh-whale-pos`（百分比）。因此切换摆动方式不改样式表、不重采样、不重新布局，动画循环也不必知道模式的存在。样式表内联了缺省摆动（`sway`）的帧带，作为配置尚未读出时的首帧兜底。可用的模式 id 见 `tools/generated/manifest.json` 的 `modeIds`。
 
 ## 兼容性与降级
 
@@ -149,11 +153,13 @@ dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.2.0
 node tools/build-assets.mjs      # 三种素材 -> 各自的帧带 / 接触版 / JSON + tools/generated/manifest.json
 node tools/sync-sheet.mjs        # 将每种摆动的帧带内联至 client.js（幂等；--check 供 CI 使用）
 node tools/build-assets.mjs --check  # 等价于「重新生成并比对」，CI 用于判定产物是否最新
-node tools/test-motion.mjs       # 离线测试：运动数学、样式表、多模式规则、VM 内的换帧循环、一次性诊断
+node tools/sync-settings.mjs     # 将参数表同时写入 index.js 与 client.js（幂等；--check 供 CI 使用）
+node tools/test-motion.mjs       # 离线测试：运动数学、模式无关样式表、配置契约与界面注册、VM 内的换帧循环、一次性诊断
 node tools/verify-frames.mjs --mode sway          # 独立复核：帧带来源、背景剔除、裁剪与幅度
 node tools/verify-frames.mjs --mode sway-gentle   # 其余两种摆动同样各自复核
 node tools/verify-frames.mjs --mode sway-vivid
 node tools/verify-motion.mjs     # 独立复核：零变换、整数帧号、速率缩放、三种帧带各自的字节一致性
+node tools/verify-settings.mjs   # 独立复核：以部署自带的 DSH 设置域投影 Host Config，核对参数、默认值与校验（无部署时跳过）
 node tools/make-gif.mjs          # 重新生成预览动图（逐像素回读校验）
 node tools/engine-shot.mjs       # 真实渲染引擎截图
 node tools/check-pack.mjs        # 校验发布包只含运行时文件（执行真实 npm pack）
@@ -168,9 +174,10 @@ node tools/check-release.mjs     # 发版一致性：pin 版本、tarball 名、
 
 | 检查 | 结果 |
 | --- | --- |
-| 离线测试 `tools/test-motion.mjs` | 24 / 24 通过 |
+| 离线测试 `tools/test-motion.mjs` | 29 / 29 通过 |
 | 帧序列独立验证 `tools/verify-frames.mjs` | 8 / 8 通过（确定性检查 9 / 9） |
 | 运行时独立验证 `tools/verify-motion.mjs` | 7 / 7 通过 |
+| 设置页独立验证 `tools/verify-settings.mjs` | 通过（64 / 64；用部署自带的 `@deepseek-ai/dsh-settings` 投影 Host Config，无部署可解析时跳过） |
 | 发布包边界 `tools/check-pack.mjs` | 通过（真实 `npm pack`：仅 6 个运行时文件） |
 | 发版一致性 `tools/check-release.mjs` | 通过（pin 版本、tarball 名、仓库 URL、离线计数） |
 | 持续集成（ubuntu，Node 20） | 8 步全部通过 |

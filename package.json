@@ -1,7 +1,7 @@
 {
   "name": "dsh-whale-sway",
-  "version": "0.2.0",
-  "description": "让 DSH 运行状态行的鲸尾逐帧摆起来：24 张预处理画面组合、运行时零旋转，摆动速度跟随实时 tok/s。Frame-by-frame whale-tail sway for the DeepSeek Harness running indicator, driven by the live token rate.",
+  "version": "0.3.0",
+  "description": "让 DSH 运行状态行的鲸尾逐帧摆起来：三种摆动素材、运行时零旋转，摆动速度跟随实时 tok/s，全部参数在插件设置页配置。Frame-by-frame whale-tail sway for the DeepSeek Harness running indicator, with three artwork styles and every parameter configurable from the plugins page.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -42,13 +42,18 @@
   "engines": {
     "node": ">=18"
   },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.4"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-ui-chat"
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
       ],
       "platform": "web"
     }
