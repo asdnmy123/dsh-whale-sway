@@ -79,6 +79,19 @@ check('the docs name the pack tarball', tgzs.length > 0, tgzs.join(', ') || 'non
 const wrongTgz = tgzs.filter((name) => name !== tarball);
 check('every tarball name is ' + tarball, wrongTgz.length === 0, wrongTgz.join(', ') || undefined);
 
+// Release notes are the published installation instructions, so version them too.
+const notesPath = resolve(ROOT, 'RELEASE_NOTES.md');
+check('RELEASE_NOTES.md exists', existsSync(notesPath));
+if (existsSync(notesPath)) {
+  const notes = readFileSync(notesPath, 'utf8');
+  check('release notes name the current version', notes.startsWith('# ' + tag + ' '));
+  const notePins = [...notes.matchAll(/github:[^\s`]+/g)].map(match => match[0]);
+  const installSpec = 'github:' + owner + '/' + repo + '#' + tag;
+  check('release notes pin the current installation', notePins.length > 0 && notePins.every(pin => pin === installSpec));
+  const noteTarballs = [...notes.matchAll(/\b[A-Za-z0-9._-]+-\d+\.\d+\.\d+[0-9A-Za-z.+-]*\.tgz\b/g)].map(match => match[0]);
+  check('release notes name the current attachment', noteTarballs.length > 0 && noteTarballs.every(name => name === tarball));
+}
+
 // --- every repository URL is this repository -------------------------------
 
 const raws = [...readme.matchAll(/raw\.githubusercontent\.com\/([^/\s)]+)\/([^/\s)]+)\//g)];
@@ -104,7 +117,7 @@ check(
 const suite = readFileSync(resolve(ROOT, 'tools/test-motion.mjs'), 'utf8');
 const suiteTests = (suite.match(/^test\(/gm) || []).length;
 const countRow = /`tools\/test-motion\.mjs`\s*\|\s*(\d+)\s*\/\s*(\d+)/.exec(readme);
-check('the README quality table counts the offline suite', countRow !== null, 'row not found');
+check('the README quality table counts the offline suite', countRow !== null, countRow === null ? 'row not found' : undefined);
 if (countRow !== null) {
   const stated = Number(countRow[1]) + '/' + Number(countRow[2]);
   check(
@@ -124,6 +137,12 @@ if (existsSync(releasingPath)) {
   check('the checklist tags the release', /git tag -a v/.test(releasing));
   check('the checklist attaches the tarball to a GitHub Release', /gh release create/.test(releasing));
   check('the checklist verifies the offline install', /check-release|\.tgz/.test(releasing));
+  check('the checklist rebuilds every sway material', releasing.includes('node tools/build-assets.mjs'));
+  for (const mode of ['sway', 'sway-gentle', 'sway-vivid']) {
+    check('the checklist independently verifies ' + mode,
+      new RegExp('node tools/verify-frames\\.mjs --mode ' + mode + '(?:\\s|$)').test(releasing));
+  }
+  check('the checklist verifies the generated settings', releasing.includes('node tools/sync-settings.mjs --check'));
 }
 
 if (!QUIET) {

@@ -11,22 +11,28 @@
   - 质量验证表里「离线测试 `tools/test-motion.mjs`」的 `N / N` 计数（等于 `tools/test-motion.mjs` 中 `test(` 的出现次数）。
 - 帧带或运动规格变了，就一并同步「运动规格」表与正文数字。
 - 改了安装或兼容性行为，同步「安装」「兼容性与降级」两节。
+- 更新 `RELEASE_NOTES.md`：版本标题、安装命令和附件名称须与 `package.json` 一致。
 
 ## 2. 本地跑完与 CI 同一套链
 
 ```powershell
-node tools/build-frames.mjs
-git diff --exit-code -- preview/frames-sheet.png preview/frames-contact-sheet.png tools/generated/frames.json
+node tools/build-assets.mjs
+git diff --exit-code -- preview/ tools/generated/
+node tools/verify-frames.mjs --mode sway
+node tools/verify-frames.mjs --mode sway-gentle
+node tools/verify-frames.mjs --mode sway-vivid
 node tools/sync-sheet.mjs --check
+node tools/sync-settings.mjs --check
 node tools/test-motion.mjs
-node tools/verify-frames.mjs
 node tools/verify-motion.mjs
+node tools/verify-settings.mjs
 node tools/make-gif.mjs
+git diff --exit-code -- preview/*.gif
 node tools/check-pack.mjs
 node tools/check-release.mjs
 ```
 
-九条全绿才继续。
+与 CI 相同的十个验证步骤全部通过才继续；设置接口检查需要可解析的 DSH 部署，在无部署的环境中会明确报告跳过。本机有 Edge/Chrome 时另外执行 `node tools/verify-mode-browser.mjs`，验证保存后的真实遮罩与图标重建。
 
 ## 3. 提交并推送
 
