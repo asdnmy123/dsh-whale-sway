@@ -8,6 +8,14 @@
 
 > A frame-composed whale-tail sway for the DeepSeek Harness running indicator, driven by the live token rate.
 
+仓库随附三种摆动素材，各自从一张 24 帧手绘 GIF 预处理而来，运行时按整帧切换：
+
+| 原始幅度 · `sway` | 小幅 · `sway-gentle` | 大幅 · `sway-vivid` |
+| --- | --- | --- |
+| ![原始幅度](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/sway-preview.gif) | ![小幅](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/sway-gentle-preview.gif) | ![大幅](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/sway-vivid-preview.gif) |
+
+同一素材的两种速度（速率映射实拍）——摆动节奏由实时 tok/s 决定，与上表的幅度选择相互独立：
+
 | 高速输出（约 47 tok/s） | 空闲等待（约 7 tok/s） |
 | --- | --- |
 | ![高速输出](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/sway-fast.gif) | ![空闲等待](https://raw.githubusercontent.com/asdnmy123/dsh-whale-sway/main/preview/sway-slow.gif) |
@@ -60,20 +68,22 @@ mask-position: 0 calc(var(--dsh-whale-frame, 0) / 23 * 100%);   /* 整格位移 
 
 ## 运动规格
 
-以下数据由独立验证器在交付的帧带上重算，长度单位为 CSS 显示像素（16 px 画框 ÷ 305 px 裁剪边长）：
+以下数据由构建报告与独立验证器在交付的帧带上重算，长度单位为 CSS 显示像素（16 px 画框 ÷ 该模式自己的裁剪边长）：
 
-| 指标 | 数值 |
-| --- | --- |
-| 尾鳍质心摆动跨度 | 3.20 px（欧氏跨度 3.28 px） |
-| 尾鳍单帧最大步进 | 0.63 px |
-| 尾鳍单周期累计行程 | 6.83 px |
-| 根部（尾柄带）跨度 / 单帧步进 | 0.045 px / 0.014 px |
-| 帧序列互异度 | 24 / 24（最小汉明距离 152） |
-| 帧格四边残留覆盖 | 0（24 / 24） |
-| 裁剪安全留边 | ≥ 12 源像素 |
-| 笔画显示宽度 | 0.885 px（出厂图标 0.875 px） |
+| 指标 | `sway`（305 px 裁剪） | `sway-gentle`（239 px） | `sway-vivid`（282 px） |
+| --- | --- | --- | --- |
+| 素材 SHA-256（前 8） | `0583b5c6` | `46b2d977` | `ce8603ad` |
+| 尾鳍质心单周期累计行程 | 6.83 px | 3.69 px | 4.45 px |
+| 尾鳍质心最大位移 | 2.28 px | 0.63 px | 1.46 px |
+| 根部（尾柄带）质心最大漂移 | 0.032 px | 0.039 px | 1.49 px |
+| 互异帧数（32 px 栅格） | 24 / 24 | 12 / 24 | 13 / 24 |
+| 帧格四边残留覆盖 | 0（24 / 24） | 0（24 / 24） | 0（24 / 24） |
+| 裁剪安全留边 | 12 源像素 | 12 源像素 | 12 源像素 |
+| 单帧最大质心步进 | 0.63 px | 0.13 px | 0.42 px |
 
-单帧最大步进为 0.63 px，即每帧位移均落在一个像素以内，逐格切换在视觉上呈现为连续运动。根部 0.045 px 的跨度源自帧序列自身的原始运动；构建期未做配准、冻结或幅度归一化（帧带与源素材的运动比值为 1.0117 ~ 1.0176，处于 ±15% 容差内）。
+`sway` 的单帧最大步进为 0.63 px，即每帧位移均落在一个像素以内，逐格切换在视觉上呈现为连续运动。根部漂移源自帧序列自身的原始运动；构建期未做配准、冻结或幅度归一化（帧带与源素材的运动比值为 1.0117 ~ 1.0176，处于 ±15% 容差内）。
+
+`sway-gentle` 与 `sway-vivid` 的素材是**往返摆动**：后 12 帧是前 12 帧的镜像回放，因此 24 帧在 32 px 栅格上只有 12（或 13）个互异画面，运行时仍逐格播放全部 24 格。这是素材本身的时长结构，构建期原样保留，只在 `tools/modes.mjs` 的 `expectDistinct` 中记录真值，并由 `tools/verify-frames.mjs` 逐模式核对。
 
 ## 安装
 
@@ -113,6 +123,16 @@ dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.2.0
 
 摆幅不提供运行时参数：其数值即帧序列的原始幅度。
 
+## 选择摆动方式
+
+三种摆动的幅度都是素材原生值，切换只改一个 CSS 自定义属性，不触发任何形变、重采样或重新布局：
+
+```css
+--dsh-whale-mode: "sway-gentle";   /* 缺省即 sway（原始幅度） */
+```
+
+`client.js` 为每种摆动各注入一组规则（各自一张 `mask-image`、各自的 `mask-size`/`mask-position`），由 `var(--dsh-whale-mode)` 选出当前生效的一组；动画循环本身完全不需要知道模式的存在。可用的模式 id 见 `tools/generated/manifest.json` 的 `modeIds`。
+
 ## 兼容性与降级
 
 - `@media (prefers-reduced-motion: no-preference)` —— 启用「减少动效」的环境保持出厂静止图标。
@@ -123,14 +143,17 @@ dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.2.0
 
 ## 构建与复现
 
-帧带由构建期生成，输入为随仓库提供的帧序列素材 `preview/2C42C558D17C2745D1D47ED3DE000BD2.gif`（GIF89a，360×360，24 帧，20 ms/帧，白色背景，墨色 `#345ebb`）。
+帧带由构建期生成，输入为随仓库提供的三张帧序列素材（均为 GIF89a、360×360、24 帧、30 ms/帧、白色背景、墨色 `#345ebb`）：`preview/sway.gif`、`preview/sway-gentle.gif`、`preview/sway-vivid.gif`。三者的素材身份（sha256）钉在 `tools/modes.mjs`，构建与独立验证都会在磁盘字节对不上时报错。
 
 ```powershell
-node tools/build-frames.mjs      # 素材 -> preview/frames-sheet.png + tools/generated/frames.json
-node tools/sync-sheet.mjs        # 将帧带内联至 client.js（幂等；--check 供 CI 使用）
-node tools/test-motion.mjs       # 离线测试：运动数学、样式表、VM 内的换帧循环、一次性诊断
-node tools/verify-frames.mjs     # 独立复核：帧带来源、背景剔除、裁剪与幅度
-node tools/verify-motion.mjs     # 独立复核：零变换、整数帧号、速率缩放
+node tools/build-assets.mjs      # 三种素材 -> 各自的帧带 / 接触版 / JSON + tools/generated/manifest.json
+node tools/sync-sheet.mjs        # 将每种摆动的帧带内联至 client.js（幂等；--check 供 CI 使用）
+node tools/build-assets.mjs --check  # 等价于「重新生成并比对」，CI 用于判定产物是否最新
+node tools/test-motion.mjs       # 离线测试：运动数学、样式表、多模式规则、VM 内的换帧循环、一次性诊断
+node tools/verify-frames.mjs --mode sway          # 独立复核：帧带来源、背景剔除、裁剪与幅度
+node tools/verify-frames.mjs --mode sway-gentle   # 其余两种摆动同样各自复核
+node tools/verify-frames.mjs --mode sway-vivid
+node tools/verify-motion.mjs     # 独立复核：零变换、整数帧号、速率缩放、三种帧带各自的字节一致性
 node tools/make-gif.mjs          # 重新生成预览动图（逐像素回读校验）
 node tools/engine-shot.mjs       # 真实渲染引擎截图
 node tools/check-pack.mjs        # 校验发布包只含运行时文件（执行真实 npm pack）
@@ -145,7 +168,7 @@ node tools/check-release.mjs     # 发版一致性：pin 版本、tarball 名、
 
 | 检查 | 结果 |
 | --- | --- |
-| 离线测试 `tools/test-motion.mjs` | 23 / 23 通过 |
+| 离线测试 `tools/test-motion.mjs` | 24 / 24 通过 |
 | 帧序列独立验证 `tools/verify-frames.mjs` | 8 / 8 通过（确定性检查 9 / 9） |
 | 运行时独立验证 `tools/verify-motion.mjs` | 7 / 7 通过 |
 | 发布包边界 `tools/check-pack.mjs` | 通过（真实 `npm pack`：仅 6 个运行时文件） |

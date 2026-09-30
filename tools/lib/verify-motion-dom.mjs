@@ -114,10 +114,15 @@ export function forceEmptySheet(source) {
   const markers = /(\/\* dsh-whale-sway:sheet:begin \*\/)([\s\S]*?)(\/\* dsh-whale-sway:sheet:end \*\/)/;
   const match = markers.exec(source);
   if (match) {
-    const inner = match[2].replace(
-      /(\bFRAME_SHEET_BASE64\s*=\s*)(['"])[\s\S]*?\2/,
-      (whole, head, quote) => head + quote + quote,
-    );
+    // Every strip in the payload, not just the default one: the build carries one
+    // `"base64"` field per mode, and the fallback must survive all of them being
+    // empty (a one-mode build is the same code path with a one-element array).
+    const inner = match[2]
+      // `"base64"` is a quoted JSON key, so a `\b` before the word never matches
+      // (the preceding character is a quote, which is not a word character).
+      // Match the quoted key the runtime actually emits.
+      .replace(/("base64"\s*:\s*)(['"])[\s\S]*?\2/g, (whole, head, quote) => head + quote + quote)
+      .replace(/(\bFRAME_SHEET_BASE64\s*=\s*)(['"])[\s\S]*?\2/, (whole, head, quote) => head + quote + quote);
     const block = match[1] + inner + match[3];
     return source.slice(0, match.index) + block + source.slice(match.index + match[0].length);
   }

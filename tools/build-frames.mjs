@@ -49,16 +49,32 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeGif } from './lib/gif-decode.mjs';
 import { encodePng } from './lib/png-encode.mjs';
+import { DEFAULT_MODE, findMode, MODE_IDS, MODES } from './modes.mjs';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Paths, relative to the repo root, of the default inputs and outputs. */
-export const DEFAULTS = {
-  source: 'preview/2C42C558D17C2745D1D47ED3DE000BD2.gif',
-  sheet: 'preview/frames-sheet.png',
-  contact: 'preview/frames-contact-sheet.png',
-  meta: 'tools/generated/frames.json',
-};
+/** The sway the CLI builds when `--mode` is not given. */
+export { DEFAULT_MODE, MODE_IDS, MODES };
+
+/**
+ * Paths, relative to the repo root, of the default inputs and outputs: the
+ * mode the README documents. Every one of them is overridable from the CLI, so
+ * the same pipeline renders every registered mode unchanged.
+ */
+export const DEFAULTS = (() => {
+  const mode = findMode(DEFAULT_MODE);
+  return {
+    modeId: mode.id,
+    source: mode.source,
+    sheet: mode.sheet,
+    contact: mode.contact,
+    meta: mode.meta,
+    inkRgb: mode.inkRgb,
+    modeLabel: mode.label,
+    modeLabelEn: mode.labelEn,
+    expectDistinct: mode.expectDistinct,
+  };
+})();
 
 /** The ink colour every written pixel is tinted with. */
 export const INK_RGB = [52, 94, 187];
@@ -265,8 +281,8 @@ export function quantizeCell(cellAlpha) {
   return out;
 }
 
-/** Stack the quantized cells into the vertical RGBA strip. */
-export function buildSheet(cellBytes, cell) {
+/** Stack the quantized cells into the vertical RGBA strip, tinted with `ink`. */
+export function buildSheet(cellBytes, cell, ink = INK_RGB) {
   const count = cellBytes.length;
   const rgba = new Uint8ClampedArray(cell * cell * count * 4);
   for (let frame = 0; frame < count; frame += 1) {
@@ -274,9 +290,9 @@ export function buildSheet(cellBytes, cell) {
     const base = frame * cell * cell;
     for (let p = 0; p < tile.length; p += 1) {
       const at = (base + p) * 4;
-      rgba[at] = INK_RGB[0];
-      rgba[at + 1] = INK_RGB[1];
-      rgba[at + 2] = INK_RGB[2];
+      rgba[at] = ink[0];
+      rgba[at + 1] = ink[1];
+      rgba[at + 2] = ink[2];
       rgba[at + 3] = tile[p];
     }
   }
@@ -289,6 +305,7 @@ export function buildContactSheet(
   cell,
   layout = CONTACT,
   backdrop = CONTACT_BACKDROP,
+  ink = INK_RGB,
 ) {
   const { magnification, columns, gutter, check } = layout;
   const rows = Math.ceil(cellBytes.length / columns);
@@ -314,9 +331,9 @@ export function buildContactSheet(
         const checker = ((Math.floor(x / check) + Math.floor(y / check)) & 1) === 0;
         const base = checker ? CONTACT_CHECKER[0] : CONTACT_CHECKER[1];
         const at = ((originY + y) * width + originX + x) * 4;
-        rgba[at] = Math.round(base[0] + (INK_RGB[0] - base[0]) * a);
-        rgba[at + 1] = Math.round(base[1] + (INK_RGB[1] - base[1]) * a);
-        rgba[at + 2] = Math.round(base[2] + (INK_RGB[2] - base[2]) * a);
+        rgba[at] = Math.round(base[0] + (ink[0] - base[0]) * a);
+        rgba[at + 1] = Math.round(base[1] + (ink[1] - base[1]) * a);
+        rgba[at + 2] = Math.round(base[2] + (ink[2] - base[2]) * a);
         rgba[at + 3] = 255;
       }
     }
@@ -441,6 +458,9 @@ export function buildFrames(material, options = {}) {
   const pad = options.pad === undefined ? DEFAULT_PAD : options.pad;
   const expectCount = options.expectCount === undefined ? 24 : options.expectCount;
   const candidates = options.candidates || CELL_CANDIDATES;
+  // Every mode's material is drawn in the same ink; the registry carries it so a
+  // future artwork with a different ink only has to change `tools/modes.mjs`.
+  const ink = options.inkRgb === undefined ? INK_RGB : options.inkRgb;
   if (!Number.isInteger(pad) || pad < MIN_PAD) fail(`--pad must be an integer >= ${MIN_PAD}`);
 
   const gif = decodeGif(material);
@@ -475,7 +495,7 @@ export function buildFrames(material, options = {}) {
       boxResample(alpha, width, height, crop.x0, crop.y0, crop.side, cell),
     );
     const cells = floatCells.map(quantizeCell);
-    const sheet = buildSheet(cells, cell);
+    const sheet = buildSheet(cells, cell, ink);
     const png = encodePng(cell, cell * count, sheet);
     return { cell, cells, sheet, png, base64: png.toString('base64') };
   });
@@ -494,11 +514,23 @@ export function buildFrames(material, options = {}) {
   const pngStable = encodedAgain.equals(sheetPng);
 
   // --- contact sheet ------------------------------------------------------
-  const contact = buildContactSheet(cells, cell);
+  const contact = buildContactSheet(cells, cell, CONTACT, CONTACT_BACKDROP, ink);
   const contactPng = encodePng(contact.width, contact.height, contact.rgba);
 
   // --- assertions / measurements -----------------------------------------
   const distinct = distinctCells(cells);
+  // Hard gate: the raster must contain exactly the number of genuinely
+  // different pictures the registry records for this mode. A back-and-forth wag
+  // rasterises its mirrored half to identical cells, so `expectDistinct` is a
+  // property of the artwork; if a rebuild collapses or splits a cell, this is
+  // where it fails instead of shipping a sheet the registry misdescribes.
+  const wantDistinct = options.expectDistinct === undefined ? count : options.expectDistinct;
+  if (distinct.distinct !== wantDistinct) {
+    fail(
+      `raster holds ${distinct.distinct} distinct cells at ${cell}px, ` +
+        `but this mode declares ${wantDistinct} (closest pair ${distinct.closest?.join(' vs ')})`,
+    );
+  }
   const border = borderReport(cells, cell);
 
   let pureWhitePixels = 0;
@@ -521,7 +553,7 @@ export function buildFrames(material, options = {}) {
           if (alpha[p] > maxAlphaByPixel.pureWhite) maxAlphaByPixel.pureWhite = alpha[p];
         }
       }
-      if (r === INK_RGB[0] && g === INK_RGB[1] && b === INK_RGB[2]) {
+      if (r === ink[0] && g === ink[1] && b === ink[2]) {
         inkPixels += 1;
         if (alpha[p] < 1) inkPixelsBelowFull += 1;
       }
@@ -649,9 +681,15 @@ export function buildFrames(material, options = {}) {
 export function buildMetadata(built, options) {
   const { report } = built;
   return {
+    id: options.modeId,
+    label: options.modeLabel,
+    labelEn: options.modeLabelEn,
     source: report.material.path,
     sourceSha256: report.material.sha256,
     count: report.material.frames,
+    distinctCells: report.distinctCells.distinct,
+    distinctCellsExpected:
+      options.expectDistinct === undefined ? report.distinctCells.distinct : options.expectDistinct,
     cell: built.cell,
     cellDisplayPx: CELL_DISPLAY_PX,
     slotInsetPx: SLOT_INSET_PX,
@@ -674,7 +712,18 @@ export function parseArgs(argv) {
       if (i >= argv.length) fail(`${arg} needs a value`);
       return argv[i];
     };
-    if (arg === '--src') options.source = value();
+    if (arg === '--mode') {
+      options.modeId = value();
+      const mode = findMode(options.modeId);
+      options.source = mode.source;
+      options.sheet = mode.sheet;
+      options.contact = mode.contact;
+      options.meta = mode.meta;
+      options.inkRgb = mode.inkRgb;
+      options.modeLabel = mode.label;
+      options.modeLabelEn = mode.labelEn;
+      options.expectDistinct = mode.expectDistinct;
+    } else if (arg === '--src') options.source = value();
     else if (arg === '--sheet') options.sheet = value();
     else if (arg === '--contact') options.contact = value();
     else if (arg === '--meta') options.meta = value();
@@ -735,10 +784,19 @@ export function printReport(built, options, written) {
     `frame count is ${options.expectCount}`,
     `${report.material.frames}`,
   );
+  // Distinctness is a property of the artwork, not of the pipeline: a wag whose
+  // two halves are mirror-symmetric rasterises a repeated cell at this raster,
+  // and the runtime still plays all `count` cells. The gate is therefore against
+  // the registry's per-mode expectation, which records how many genuinely
+  // different pictures the material contains (see `expectDistinct` there).
+  const wantDistinct = options.expectDistinct === undefined
+    ? report.material.frames
+    : options.expectDistinct;
   assertion(
-    report.distinctCells.distinct === report.material.frames,
-    `all ${report.material.frames} cells distinct at ${report.raster.chosen}px`,
-    `${report.distinctCells.distinct} distinct, min Hamming ${report.distinctCells.minHammingDistance} (frames ${report.distinctCells.closestPair?.join(' vs ')})`,
+    report.distinctCells.distinct === wantDistinct,
+    `${wantDistinct} distinct cells at ${report.raster.chosen}px` +
+      (wantDistinct === report.material.frames ? ' (one per frame)' : ` of ${report.material.frames} frames`),
+    `${report.distinctCells.distinct} distinct, min Hamming ${report.distinctCells.minHammingDistance} (closest ${report.distinctCells.closestPair?.join(' vs ')})`,
   );
   assertion(
     report.margins.worstSourcePx >= report.margins.requiredSourcePx,
@@ -791,18 +849,45 @@ export function printReport(built, options, written) {
 function main(argv) {
   const options = parseArgs(argv);
   if (options.help) {
-    console.log('usage: node tools/build-frames.mjs [--src path] [--pad n] [--expect-count n]');
-    console.log('                               [--sheet path] [--contact path] [--meta path]');
+    console.log('usage: node tools/build-frames.mjs [--mode id] [--src path] [--pad n]');
+    console.log('                               [--expect-count n] [--sheet path]');
+    console.log('                               [--contact path] [--meta path]');
+    console.log('');
+    console.log('registered modes: ' + MODE_IDS.join(', ') + ' (default ' + DEFAULT_MODE + ')');
     return;
+  }
+  // `--mode` picks a registered sway; an explicit `--src` still wins, so the
+  // determinism harness can aim the same mode at redirected outputs.
+  const sourceOverride = process.argv.includes('--src');
+  if (options.modeId !== undefined) {
+    const mode = findMode(options.modeId);
+    options.source = sourceOverride ? options.source : mode.source;
+    options.inkRgb = mode.inkRgb;
+    options.modeLabel = mode.label;
+    options.modeLabelEn = mode.labelEn;
+    if (!sourceOverride) options.modeSha = mode.sourceSha256;
   }
   const sourceAbs = resolve(ROOT, options.source);
   const material = readFileSync(sourceAbs);
   options.source = repoRelative(sourceAbs);
+  options.modeId = options.modeId === undefined ? DEFAULT_MODE : options.modeId;
+
+  // Traceability: when the material comes from the registry, the bytes on disk
+  // must hash to what the registry declares. A silently swapped or re-exported
+  // GIF would otherwise change the ship while the mode's identity stayed put.
+  if (options.modeSha !== undefined && sha256Hex(material) !== options.modeSha) {
+    fail(
+      `material ${options.source} hashes to ${sha256Hex(material)}, ` +
+        `but tools/modes.mjs declares ${options.modeSha} for mode "${options.modeId}"`,
+    );
+  }
 
   const built = buildFrames(material, {
     pad: options.pad,
     expectCount: options.expectCount,
+    expectDistinct: options.expectDistinct,
     source: options.source,
+    inkRgb: options.inkRgb,
   });
 
   const sheetAbs = resolve(ROOT, options.sheet);

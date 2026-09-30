@@ -34,14 +34,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inflateSync } from 'node:zlib';
+import { MODES } from './modes.mjs';
 
 /** Repository root (this file lives in `<root>/tools/`). */
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
 /** The real client half; the sole source of truth for the period mapping. */
 export const CLIENT_PATH = join(ROOT, 'client.js');
-/** The sprite sheet task-2 produces, and the metadata that describes it. */
-export const SHEET_PATH = join(ROOT, 'preview', 'frames-sheet.png');
-export const META_PATH = join(ROOT, 'tools', 'generated', 'frames.json');
+/** The default mode's sheet, and the metadata that describes it. */
+export const SHEET_PATH = join(ROOT, 'preview', 'sway-sheet.png');
+export const META_PATH = join(ROOT, 'tools', 'generated', 'sway.json');
 
 /** Light surface the README previews sit on. */
 export const BG = [246, 247, 250];
@@ -930,29 +931,45 @@ export async function main(argv = process.argv.slice(2)) {
   );
 
   const api = await loadClientEngine();
-  const engineSheetSha =
-    typeof api.FRAME_SHEET_BASE64 === 'string' && api.FRAME_SHEET_BASE64.length > 0
-      ? createHash('sha256').update(Buffer.from(api.FRAME_SHEET_BASE64, 'base64')).digest('hex')
-      : null;
   // `hasSheet` is exported as a predicate by the runtime; accept either shape so
   // this check cannot be fooled by a function that is always truthy.
   const engineHasSheet = typeof api.hasSheet === 'function' ? api.hasSheet() : api.hasSheet;
   if (engineHasSheet === false) {
     throw new Error('client.js reports hasSheet=false: it cannot step the frames, so previews would lie');
   }
-  if (engineSheetSha !== null) {
-    if (engineSheetSha !== loaded.sha) {
-      throw new Error(
-        `client.js carries sheet sha256 ${engineSheetSha}, but ${loaded.sheetPath} hashes to ${loaded.sha}`,
-      );
-    }
-    console.log(`  client.js inlines the same sheet (sha256 ${engineSheetSha.slice(0, 16)}…)`);
-  } else {
-    console.log('  note: client.js does not expose FRAME_SHEET_BASE64, so the inline copy was not cross-checked');
-  }
   if (typeof api.FRAME_COUNT === 'number' && api.FRAME_COUNT !== loaded.meta.count) {
     throw new Error(`client.js FRAME_COUNT ${api.FRAME_COUNT} != sheet count ${loaded.meta.count}`);
   }
+
+  // Every spliced mode, cross-checked against the sheet in the same panel. This
+  // is the strongest statement the preview tool can make: the bytes it is about
+  // to rasterise are the bytes `client.js` will mask, one data URL per mode.
+  const enginePanels = Array.isArray(api.MODE_PANELS) ? api.MODE_PANELS : [];
+  if (enginePanels.length === 0) {
+    throw new Error('client.js exposes no MODE_PANELS: run `node tools/build-assets.mjs` then `node tools/sync-sheet.mjs`');
+  }
+  const mismatched = [];
+  const modeSheets = new Map();
+  for (const panel of enginePanels) {
+    const bytes = Buffer.from(String(panel.base64 || ''), 'base64');
+    const modeMetaPath = join(ROOT, 'tools', 'generated', `${panel.id}.json`);
+    const modeMeta = JSON.parse(readFileSync(modeMetaPath, 'utf8'));
+    const sheetPath = resolve(ROOT, modeMeta.sheet);
+    const sheetBytes = readFileSync(sheetPath);
+    const inlined = `${panel.id} mode sha256 ${createHash('sha256').update(bytes).digest('hex')}`;
+    if (!bytes.equals(sheetBytes)) {
+      mismatched.push(`${panel.id}: client.js inlines ${bytes.length} B, ${modeMeta.sheet} is ${sheetBytes.length} B`);
+    }
+    if (bytes.length > 0 && bytes.length !== sheetBytes.length) mismatched.push(inlined);
+    modeSheets.set(panel.id, { panel, meta: modeMeta, sheetPath, sheetBytes });
+  }
+  if (mismatched.length > 0) {
+    throw new Error(`client.js panels do not match their sheets: ${mismatched.join('; ')}`);
+  }
+  console.log(
+    `  client.js inlines ${enginePanels.length} sheet(s), each byte-identical to its sheet: ` +
+      enginePanels.map((panel) => panel.id).join(', '),
+  );
 
   const scale = scaleForCell(sheet.cell);
   const composited = compositeFrames(sheet, scale);
@@ -1018,7 +1035,57 @@ export async function main(argv = process.argv.slice(2)) {
     `sway-fast.gif ${(proofs[0].bytes / 1024).toFixed(1)} KiB sha256 ${proofs[0].sha.slice(0, 16)}…  |  ` +
       `sway-slow.gif ${(proofs[1].bytes / 1024).toFixed(1)} KiB sha256 ${proofs[1].sha.slice(0, 16)}…`,
   );
-  return { sheet, motion, proofs, scale, composited };
+
+  // One preview per mode, so the README can show what each spliced sway looks
+  // like. They share a fixed tempo (2 cs/frame, the browser floor): the point of
+  // these files is the amplitude, and leaving the tempo constant is what makes a
+  // side-by-side amplitude comparison honest.
+  const modeProofs = [];
+  for (const mode of MODES) {
+    const entry = modeSheets.get(mode.id);
+    if (entry === undefined) throw new Error(`mode "${mode.id}" is registered but not spliced into client.js`);
+    const modePng = decodePng(entry.sheetBytes);
+    const modeSheet = loadSheetCells(modePng, entry.meta.cell, entry.meta.count);
+    const modeScale = scaleForCell(modeSheet.cell);
+    const modeComposited = compositeFrames(modeSheet, modeScale);
+    const delayCs = 2;
+    const gif = buildGif(
+      modeComposited.size,
+      modeComposited.size,
+      modeComposited.palette,
+      modeComposited.frames,
+      delayCs,
+    );
+    const rel = `preview/${mode.id}-preview.gif`;
+    // Never doubled: `rel` is already outDir-relative (see SHOTS).
+    const path = resolve(outDir, rel);
+    mkdirSync(dirname(path), { recursive: true });
+    const previous = existsSync(path) ? readFileSync(path) : null;
+    writeFileSync(path, gif);
+    const proof = verifyGif({
+      gif,
+      path,
+      frames: modeComposited.frames,
+      size: modeComposited.size,
+      delayCs,
+      palette: modeComposited.palette,
+      label: mode.id,
+      previous,
+    });
+    proof.rate = null;
+    proof.delayCs = delayCs;
+    proof.loopMs = delayCs * 10 * entry.meta.count;
+    proof.mode = mode.id;
+    proof.cell = modeSheet.cell;
+    proof.count = entry.meta.count;
+    modeProofs.push(proof);
+    console.log(
+      `\nmode ${mode.id}: ${entry.meta.count} frames x ${modeSheet.cell}px @ ${delayCs * 10} ms = ` +
+        `${proof.loopMs} ms/loop, ${modeComposited.size}x${modeComposited.size} raster -> ${rel} (${(gif.length / 1024).toFixed(1)} KiB)`,
+    );
+  }
+
+  return { sheet, motion, proofs, modeProofs, scale, composited, enginePanels };
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {

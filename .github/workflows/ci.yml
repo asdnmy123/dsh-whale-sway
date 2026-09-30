@@ -43,28 +43,32 @@ jobs:
         with:
           node-version: '20'
 
-      - name: the frames are provably the artwork (regenerate, then diff)
+      - name: every sheet is provably its artwork (regenerate, then diff)
         run: |
-          node tools/build-frames.mjs
-          git diff --exit-code -- \
-            preview/frames-sheet.png \
-            preview/frames-contact-sheet.png \
-            tools/generated/frames.json
+          node tools/build-assets.mjs
+          git add -N preview/*.png tools/generated/*.json
+          git diff --exit-code -- preview/ tools/generated/
 
-      - name: the sheet inlined in client.js is that exact artifact
+      - name: each of the three sways verifies against its own material
+        run: |
+          node tools/verify-frames.mjs --mode sway
+          node tools/verify-frames.mjs --mode sway-gentle
+          node tools/verify-frames.mjs --mode sway-vivid
+
+      - name: the sheets inlined in client.js are those exact artifacts
         run: node tools/sync-sheet.mjs --check
 
       - name: offline engine tests
         run: node tools/test-motion.mjs
 
-      - name: verify the frames (artwork, white removal, no clipping)
-        run: node tools/verify-frames.mjs
-
       - name: verify the motion (frame selection, zero transform)
         run: node tools/verify-motion.mjs
 
-      - name: the README previews regenerate
-        run: node tools/make-gif.mjs
+      - name: the README previews regenerate byte-identically
+        run: |
+          node tools/make-gif.mjs
+          git add -N preview/*.gif
+          git diff --exit-code -- preview/*.gif
 
       - name: the published tarball carries the plugin and nothing else
         run: node tools/check-pack.mjs

@@ -23,6 +23,7 @@
  *                                  [--frames <path>] [--quiet]
  */
 
+import { createHash } from 'node:crypto';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -52,8 +53,36 @@ function argValue(name, fallback) {
 }
 
 const CLIENT_PATH = path.resolve(ROOT, argValue('--client', 'client.js'));
-const SHEET_PATH = path.resolve(ROOT, argValue('--sheet', 'preview/frames-sheet.png'));
-const FRAMES_PATH = path.resolve(ROOT, argValue('--frames', 'tools/generated/frames.json'));
+const SHEET_PATH = path.resolve(ROOT, argValue('--sheet', 'preview/sway-sheet.png'));
+const FRAMES_PATH = path.resolve(ROOT, argValue('--frames', 'tools/generated/sway.json'));
+const MANIFEST_PATH = path.resolve(ROOT, argValue('--manifest', 'tools/generated/manifest.json'));
+
+/**
+ * The shipped set, as declared by the build: one entry per sway mode. The
+ * verifier reads it but trusts none of it — every claim below is re-measured
+ * from the bytes on disk and from the CSS the module actually emits.
+ */
+let manifest = null;
+if (existsSync(MANIFEST_PATH)) {
+  try {
+    manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+  } catch (error) {
+    manifest = { __parseError: String(error && error.message) };
+  }
+}
+const manifestModes = manifest !== null && Array.isArray(manifest.modes) ? manifest.modes : [];
+/** Expected inlined PNG payloads, straight from each mode's own sheet file. */
+function expectedModePayloads() {
+  const entries = [];
+  for (const mode of manifestModes) {
+    if (typeof mode.sheet !== 'string') continue;
+    const bytes = existsSync(path.resolve(ROOT, mode.sheet)) ? readFileSync(path.resolve(ROOT, mode.sheet)) : null;
+    if (bytes === null) continue;
+    entries.push({ id: String(mode.id), base64: bytes.toString('base64'), bytes });
+  }
+  return entries;
+}
+const modePayloads = expectedModePayloads();
 const QUIET = argv.includes('--quiet');
 const REPORT_PATH = path.join(ROOT, '.edge-tmp', 'mv', 'report.json');
 
@@ -614,8 +643,33 @@ check('2', 'FRAME-SELECTION motion (integer frame property, monotone, rate-scale
   // (e) the emitted CSS must point at the spliced sheet data URL.
   assert(liveCss !== null && liveCss.length > 0, 'no emitted CSS (empty stylesheet)');
   assert(/data:image\/png;base64,/i.test(liveCss), 'emitted CSS has no PNG data URL');
+  // With several sways spliced, the stylesheet must carry exactly one payload per
+  // registered mode — no more (a duplicate or an unregistered sheet is a bug) and
+  // no fewer (a mode that silently paints nothing). The set is compared against
+  // the modes' own sheet files, with the manifest's hash as a third opinion.
   const payloads = cssSheetPayloads(liveCss);
-  assert(payloads.length === 1, `emitted CSS must contain exactly ONE distinct sheet payload (got ${payloads.length})`);
+  assert(payloads.length > 0, 'emitted CSS has no sheet payload');
+  assert(
+    modePayloads.length === 0 || payloads.length === modePayloads.length,
+    `emitted CSS carries ${payloads.length} distinct sheet payload(s), but the manifest registers ` +
+      `${modePayloads.length} mode(s): ${manifestModes.map((m) => m.id).join(', ')}`,
+  );
+  const expectedSet = new Set(modePayloads.map((entry) => entry.base64));
+  if (expectedSet.size > 0) {
+    const unmatched = payloads.filter((payload) => !expectedSet.has(payload));
+    assert(
+      unmatched.length === 0,
+      `${unmatched.length} of ${payloads.length} inline payload(s) are not any mode's own sheet bytes`,
+    );
+    const manifestHashes = new Set(
+      manifestModes.map((mode) => String(mode.sheetSha256 || '').toLowerCase()).filter(Boolean),
+    );
+    if (manifestHashes.size > 0) {
+      const shaOf = (text) => createHash('sha256').update(decodeBase64(text)).digest('hex');
+      const unknown = payloads.filter((payload) => !manifestHashes.has(shaOf(payload)));
+      assert(unknown.length === 0, `${unknown.length} inline payload(s) do not hash to any manifest sheetSha256`);
+    }
+  }
   assert(payloads[0].length > 1000, `the sheet payload looks truncated (${payloads[0].length} base64 chars)`);
 
   measurements.frameProperty = frameProp;
@@ -953,8 +1007,15 @@ check('7', 'GATES (reduced-motion, forced-colors, @supports)', () => {
 
   // NOTE: the @supports *header* itself contains `mask-image:url("")`, so the
   // real paint rule must be located by its data URL, not by a bare "mask-image".
-  const maskIndex = css.search(/mask-image\s*:\s*url\(\s*["']?data:/i);
+  // The paint rule may name the strip directly (`mask-image:url("data:...")`) or
+  // through the per-mode custom property the build emits
+  // (`mask-image:var(--dsh-whale-sheet)` with the data URL on the rule that sets
+  // it). Both are the same paint; the probe must accept either and then prove the
+  // variable really carries a PNG data URL.
+  const maskIndex = css.search(/mask-image\s*:\s*(url\(\s*["']?data:|var\(\s*--[a-z-]*(?:sheet|strip|mask))/i);
   assert(maskIndex >= 0, 'no data-URL mask-image rule to gate (the stylesheet must paint the sheet)');
+  const sheetVarData = css.search(/--[a-z-]*(?:sheet|strip|mask)[a-z-]*\s*:\s*url\(\s*["']?data:image\/png;base64,/i);
+  assert(sheetVarData >= 0, 'the sheet custom property does not carry a PNG data URL');
   const frameIndex = css.search(/var\(\s*--dsh-whale-frame\b/i);
   assert(frameIndex >= 0, 'no --dsh-whale-frame usage to gate');
 

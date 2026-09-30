@@ -73,10 +73,18 @@ function near(actual, expected, tolerance, message) {
 
 const SOURCE = readFileSync(CLIENT, 'utf8');
 
-/** Blank out the spliced sheet, to exercise the unspliced-build path. */
+/**
+ * Blank out the spliced payload, to exercise the unspliced-build path.
+ *
+ * The splice carries the whole payload twice — once as `MODE_PANELS`, once as
+ * the default mode's legacy constants — so a bare checkout is modelled by
+ * emptying both: the base64 becomes `''`, the strip counts become `0`, and the
+ * panel array becomes empty.
+ */
 function withoutSheet(source) {
   return source
-    .replace(/var FRAME_SHEET_BASE64 = '[^']*';/, "var FRAME_SHEET_BASE64 = '';")
+    .replace(/var MODE_PANELS = \[[\s\S]*?\n  \];/, 'var MODE_PANELS = [];')
+    .replace(/var FRAME_SHEET_BASE64 = '[\s\S]*?';/, "var FRAME_SHEET_BASE64 = '';")
     .replace(/var FRAME_COUNT = \d+;/, 'var FRAME_COUNT = 0;');
 }
 
@@ -354,16 +362,47 @@ test('the stylesheet contains no transform of any kind', () => {
   assert(CSS.indexOf('!important') !== -1, 'the override must win against the shipped rules');
 });
 
-test('the stylesheet steps the strip by whole cells', () => {
-  assert(CSS.indexOf('mask-image:url("data:image/png;base64,') !== -1, 'the strip is the mask');
+test('the stylesheet steps every mode strip by whole cells', () => {
+  for (const panel of api.MODE_PANELS) {
+    const at = CSS.indexOf(panel.base64);
+    assert(at !== -1, 'mode ' + panel.id + ': its strip must appear in the stylesheet');
+    assert(
+      CSS.indexOf('mask-image:url("data:image/png;base64,' + panel.base64) !== -1 ||
+        CSS.indexOf('--dsh-whale-sheet:url("data:image/png;base64,' + panel.base64) !== -1,
+      'mode ' + panel.id + ': the strip must be a mask image',
+    );
+    assert(
+      CSS.indexOf('mask-size:100% ' + panel.count * 100 + '%') !== -1,
+      'mode ' + panel.id + ': the mask must hold every cell',
+    );
+    assert(
+      CSS.indexOf('mask-position:0 calc(var(' + api.FRAME_VAR + ',0) / ' + (panel.count - 1) + ' * 100%)') !== -1,
+      'mode ' + panel.id + ': mask-position must be driven by the integer frame property',
+    );
+  }
   assert(CSS.indexOf('mask-mode:alpha') !== -1, 'the strip is an alpha mask');
-  assert(CSS.indexOf('mask-size:100% ' + COUNT * 100 + '%') !== -1, 'the mask holds every cell');
-  assert(
-    CSS.indexOf('mask-position:0 calc(var(' + api.FRAME_VAR + ',0) / ' + (COUNT - 1) + ' * 100%)') !== -1,
-    'mask-position must be driven by the integer frame property',
-  );
-  assert(CSS.indexOf('-webkit-mask-image') !== -1, 'the -webkit twin is required by the shipped bundle');
+  assert(CSS.indexOf('mask-image:var(--dsh-whale-sheet)') !== -1, 'the mask reads the selected mode sheet');
+  assert(CSS.indexOf('-webkit-mask-image:var(--dsh-whale-sheet)') !== -1, 'the -webkit twin is required');
   assert(CSS.indexOf('-webkit-mask-position') !== -1, 'the -webkit position twin is required');
+});
+
+test('every registered sway mode is spliced with a matching strip and cell count', () => {
+  assert(api.MODE_PANELS.length >= 3, 'all shipped sway modes must be spliced, got ' + api.MODE_PANELS.length);
+  const seen = new Set();
+  for (const panel of api.MODE_PANELS) {
+    assert(typeof panel.id === 'string' && panel.id.length > 0, 'each panel names its mode');
+    assert(!seen.has(panel.id), 'duplicate mode id ' + panel.id);
+    seen.add(panel.id);
+    assert(Number.isInteger(panel.count) && panel.count >= 2, panel.id + ': count must be an integer >= 2');
+    assert(Number.isInteger(panel.cell) && panel.cell >= 2, panel.id + ': cell must be an integer >= 2');
+    const bytes = Buffer.from(panel.base64, 'base64');
+    assert(bytes.length > 1000, panel.id + ': the strip looks suspiciously small');
+    equal(bytes.toString('hex', 0, 8), '89504e470d0a1a0a', panel.id + ': PNG signature');
+    equal(bytes.readUInt32BE(16), panel.cell, panel.id + ': sheet width is one cell');
+    equal(bytes.readUInt32BE(20), panel.cell * panel.count, panel.id + ': sheet height is count cells');
+    assert(/(^|\/)preview\/[a-z-]+\.gif$/.test(panel.source), panel.id + ': source must name a preview GIF');
+  }
+  assert(seen.has(api.DEFAULT_MODE), 'the default mode must be one of the spliced panels');
 });
 
 test('the stylesheet keeps its safety gates', () => {
