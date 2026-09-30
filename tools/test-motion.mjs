@@ -842,8 +842,8 @@ test('the Plugins page is given the configuration, and the document repaints the
   });
   for (const fn of effects) fn();
 
-  equal(registrations.length, 2, 'the configuration must reach both Plugins-page seats');
-  const keys = registrations.map((entry) => entry.options.key).sort();
+  equal(registrations.length, 3, 'the configuration reaches Settings navigation and both Plugins-page seats');
+  const keys = registrations.filter((entry) => entry.options.key).map((entry) => entry.options.key).sort();
   equal(
     keys.join(','),
     [harness.api.BUNDLE_CONFIG_KEY, harness.api.ROW_CONFIG_KEY].sort().join(','),
@@ -851,8 +851,8 @@ test('the Plugins page is given the configuration, and the document repaints the
   );
   for (const entry of registrations) {
     assert(
-      entry.options.name === 'plugins.bundle.config' || entry.options.name === 'plugins.row.config',
-      'registered on a Plugins-page configuration slot, got ' + entry.options.name,
+      ['settings.section', 'plugins.bundle.config', 'plugins.row.config'].includes(entry.options.name),
+      'registered on a settings or plugin configuration slot, got ' + entry.options.name,
     );
     equal(entry.options.locale, harness.api.SETTINGS_NS, 'the page owns the plugin dictionary');
     equal(typeof entry.component, 'function', 'the slot carries a component');
@@ -865,12 +865,13 @@ test('the Plugins page is given the configuration, and the document repaints the
     'the registered dictionary is the generated one',
   );
 
-  const face = registrations[0].options.inject();
+  const pluginCard = registrations.find((entry) => entry.options.name === 'plugins.row.config');
+  const face = pluginCard.options.inject();
   const projection = face.hooks.whaleSwayConfig.getSnapshot();
   equal(projection.fields.mode.text, 'sway-vivid', 'the staged mode is the document\'s mode');
   equal(projection.state.available, true, 'the form is available while the Host serves the namespace');
 
-  const card = registrations[0].component({
+  const card = pluginCard.component({
     t: (key) => key,
     view: 'page',
     useWhaleSwayConfig: (select) => select(projection),
@@ -884,7 +885,7 @@ test('the Plugins page is given the configuration, and the document repaints the
   assert(types.indexOf('SegmentedControl') !== -1, 'the sway mode renders as a segmented control');
   equal(types.filter((type) => type === 'SettingsValueField').length, 7, 'every number field renders a value field');
   equal(types.filter((type) => type === 'Switch').length, 1, 'the enable switch renders once');
-  const summary = registrations[0].component({ t: (key) => key, view: 'summary' });
+  const summary = pluginCard.component({ t: (key) => key, view: 'summary' });
   equal(summary, 'page.summary', 'the summary view is the row\'s one-liner');
 
   // The document selects a sway: the icon must carry that mode's own strip.
@@ -931,6 +932,169 @@ test('the Plugins page is given the configuration, and the document repaints the
     attached().some((tag) => tag.dataset.pluginCss === harness.api.CSS_TAG),
     'the reinstalled stylesheet is the animation one',
   );
+});
+
+// ---------------------------------------------------------------------------
+// settings navigation and registration lifecycle
+// ---------------------------------------------------------------------------
+
+/** Simulate the two independent gates: a served config and a declared slot. */
+function settingsHarness() {
+  const harness = loadModule(SOURCE);
+  const primitives = fakePrimitives();
+  let disposedModels = 0;
+  const BaseModel = primitives.SettingsFormModel;
+  primitives.SettingsFormModel = class extends BaseModel {
+    dispose() { disposedModels += 1; }
+  };
+  harness.api.setModuleRequire((id) => id === 'react' ? fakeReact : primitives);
+  const listeners = new Set();
+  const registrations = new Map();
+  const declared = new Set();
+  const waiting = new Map();
+  let language = 'zh';
+  let served = false;
+  let registerServed;
+  let offServed = null;
+  let dictionaries = 0;
+  const scope = {
+    getSnapshot: () => ({ status: served ? 'ready' : 'unavailable', value: harness.api.defaultConfig() }),
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+  };
+  const scoped = {
+    locale: {
+      bind: () => (key) => harness.api.SETTINGS_I18N[language][key],
+      register() { dictionaries += 1; return () => { dictionaries -= 1; }; },
+    },
+    slots: {
+      inject(name, callback) {
+        const item = { callback, off: null };
+        if (!waiting.has(name)) waiting.set(name, new Set());
+        waiting.get(name).add(item);
+        if (declared.has(name)) item.off = callback();
+        return () => { waiting.get(name).delete(item); item.off?.(); };
+      },
+      register(options, component) {
+        if (!declared.has(options.name)) throw new Error('slot not declared: ' + options.name);
+        if (registrations.has(options.name)) throw new Error('duplicate slot: ' + options.name);
+        registrations.set(options.name, { options, component });
+        return () => registrations.delete(options.name);
+      },
+    },
+    configForms: {
+      get: () => scope,
+      whileServed(namespaces, callback) {
+        equal(namespaces.join(','), harness.api.SETTINGS_NS, 'only the plugin namespace gates registration');
+        registerServed = callback;
+        return () => { offServed?.(); offServed = null; registerServed = null; };
+      },
+    },
+  };
+  const dispose = harness.api.mountConfiguration({
+    inject(deps, mount) { mount(scoped); return { dispose() {} }; },
+  }, { setConfig() {} }, harness.api.defaultConfig(), () => {});
+  return {
+    ...harness, primitives, registrations, listeners,
+    declare(name) {
+      declared.add(name);
+      for (const item of waiting.get(name) || []) item.off = item.callback();
+    },
+    serve(next) {
+      served = next;
+      if (next) offServed = registerServed();
+      else { offServed?.(); offServed = null; }
+      for (const listener of listeners) listener();
+    },
+    setLanguage(next) { language = next; },
+    dispose,
+    get disposedModels() { return disposedModels; },
+    get dictionaries() { return dictionaries; },
+  };
+}
+
+test('settings navigation waits for the host form and slot, and follows the locale', () => {
+  const h = settingsHarness();
+  equal(h.registrations.size, 0, 'an unserved form has no navigation entry');
+  h.serve(true);
+  equal(h.registrations.size, 0, 'a served form still waits for slot declaration');
+  h.declare('settings.section');
+  const section = h.registrations.get('settings.section');
+  assert(section, 'a declared settings section receives the page');
+  equal(section.options.id, h.api.SETTINGS_NS, 'section identity is stable and unique');
+  equal(section.options.key, undefined, 'list slots use id rather than a keyed card identity');
+  equal(section.options.locale, h.api.SETTINGS_NS, 'section uses the plugin locale');
+  assert(Number.isFinite(section.options.order), 'navigation has an explicit position');
+  equal(section.options.label(), '鲸尾摆动', 'Chinese navigation label');
+  h.setLanguage('en');
+  equal(section.options.label(), 'Whale tail', 'the registered label follows locale changes');
+  h.dispose();
+});
+
+test('settings page renders all controls and shares drafts and actions with plugin details', () => {
+  const h = settingsHarness();
+  for (const name of ['settings.section', 'plugins.row.config', 'plugins.bundle.config']) h.declare(name);
+  h.serve(true);
+  const section = h.registrations.get('settings.section');
+  const face = section.options.inject();
+  for (const entry of h.registrations.values()) {
+    const other = entry.options.inject();
+    equal(other.hooks.whaleSwayConfig, face.hooks.whaleSwayConfig, 'every entry shares the draft store');
+  }
+  const props = {
+    ...face, t: (key) => h.api.SETTINGS_I18N.zh[key],
+    useWhaleSwayConfig: (select) => select(face.hooks.whaleSwayConfig.getSnapshot()),
+  };
+  const nodes = [];
+  function expand(node) {
+    if (Array.isArray(node)) { node.forEach(expand); return; }
+    if (!node || typeof node !== 'object') return;
+    if (typeof node.type === 'function') { expand(node.type(node.props)); return; }
+    nodes.push(node);
+    (node.children || []).forEach(expand);
+  }
+  expand(section.component(props));
+  assert(nodes.some((node) => /^h[1-4]$/.test(node.type) && node.children.includes(props.t('page.title'))), 'page has a localized heading');
+  const form = nodes.find((node) => node.type === 'SettingsForm');
+  assert(form, 'section renders the shared form');
+  equal(form.props.onSave, face.save, 'saving uses the same staged form action');
+  equal(form.props.onDiscard, face.discard, 'discarding uses the same staged form action');
+  equal(form.props.labels.save, '保存', 'the save action has generated Chinese text');
+  const numbers = nodes.filter((node) => node.type === 'SettingsValueField');
+  equal(numbers.length, 7, 'all numeric parameters are editable');
+  numbers[0].props.onEdit('240');
+  numbers[0].props.onReset();
+  const mode = nodes.find((node) => node.type === 'SegmentedControl');
+  mode.props.onChange('sway-vivid');
+  nodes.find((node) => node.type === 'Switch').props.onChange(false);
+  equal(h.primitives.calls.edits.map((edit) => edit.id).join(','), 'minPeriodMs,mode,enabled', 'controls edit their own shared fields');
+  equal(h.primitives.calls.resets.join(','), 'minPeriodMs', 'reset stages the field default');
+  h.dispose();
+});
+
+test('settings contributions disappear on unserve and unload, and return without duplicates', () => {
+  const h = settingsHarness();
+  for (const name of ['settings.section', 'plugins.row.config', 'plugins.bundle.config']) h.declare(name);
+  h.serve(true);
+  equal(h.registrations.size, 3, 'all three entries are mounted');
+  h.serve(false);
+  equal(h.registrations.size, 0, 'unserved namespaces remove navigation and detail entries');
+  h.serve(true);
+  equal(h.registrations.size, 3, 'serving again restores exactly one of each entry');
+  h.dispose();
+  equal(h.registrations.size, 0, 'unload removes every entry');
+  equal(h.listeners.size, 0, 'unload removes the runtime document subscription');
+  equal(h.dictionaries, 0, 'unload removes the locale dictionary');
+  equal(h.disposedModels, 1, 'the shared form model is disposed once');
+  equal(h.state.styleTags.filter((tag) => tag.parentNode !== null).length, 0, 'unload removes the page stylesheet');
+});
+
+test('generated locale dictionaries include every page action and status message', () => {
+  for (const locale of ['zh', 'en']) {
+    for (const key of ['nav', 'title', 'summary', 'unavailable', 'readOnly', 'save', 'saving', 'saveFailed', 'overridden', 'reset', 'invalidNumber']) {
+      const text = api.SETTINGS_I18N[locale]['page.' + key];
+      assert(typeof text === 'string' && text.length > 0, locale + ' needs page.' + key);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

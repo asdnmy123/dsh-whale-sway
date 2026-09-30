@@ -110,10 +110,11 @@ dsh plugin --profile desktop add github:asdnmy123/dsh-whale-sway#v0.3.0
 
 ## 插件配置界面
 
-本插件在 DSH 的「设置 → 插件」页面提供配置界面。改动写入该 Loader 条目的 `config`，由 DSH 的 settings 域持久化到当前 profile 的 `cordis.patch.yml`，因此跨重启保留，并在保存后立即作用于正在运行的动画（`patchReload: live`）。
+本插件在 DSH 设置页的侧栏提供「鲸尾摆动」（英文界面为 “Whale tail”）入口，也保留「设置 → 插件」中的 bundle 与条目配置入口。改动写入该 Loader 条目的 `config`，由 DSH 的 settings 域持久化到当前 profile 的 `cordis.patch.yml`，因此跨重启保留，并在保存后立即作用于正在运行的动画（`patchReload: live`）。
 
-入口有两处，指向同一个表单：
+三个入口共用同一个表单和保存状态：
 
+- 设置页侧栏中的「鲸尾摆动」；
 - 插件 bundle 详情页（插件列表中的 `dsh-whale-sway` 卡片）内嵌的配置区；
 - 该 bundle 下 `dsh-whale-sway` 条目页的配置区。
 
@@ -174,7 +175,7 @@ node tools/check-release.mjs     # 发版一致性：pin 版本、tarball 名、
 
 | 检查 | 结果 |
 | --- | --- |
-| 离线测试 `tools/test-motion.mjs` | 29 / 29 通过 |
+| 离线测试 `tools/test-motion.mjs` | 33 / 33 通过 |
 | 帧序列独立验证 `tools/verify-frames.mjs` | 8 / 8 通过（确定性检查 9 / 9） |
 | 运行时独立验证 `tools/verify-motion.mjs` | 7 / 7 通过 |
 | 设置页独立验证 `tools/verify-settings.mjs` | 通过（64 / 64；用部署自带的 `@deepseek-ai/dsh-settings` 投影 Host Config，无部署可解析时跳过） |

@@ -67,8 +67,9 @@
  * ## Load contract
  *
  * A DSH web client module: `window.__ModuleLoader__.load({ id, factory })`, with
- * `apply(ctx)` / `inject` on the returned module. No build step, no React, no
- * Slot registration - one stylesheet plus one animation loop.
+ * `apply(ctx)` / `inject` on the returned module. The running animation needs
+ * only one stylesheet and one loop; optional settings contributions use the
+ * DSH slots and shared settings form when those services are available.
  */
 
 (function () {
@@ -346,7 +347,18 @@
       "field.sampleMs.label": "取样间隔（毫秒）",
       "field.sampleMs.hint": "两次文本长度观测之间的间隔。",
       "field.smooth.label": "平滑系数",
-      "field.smooth.hint": "每次新观测折算进当前速率的权重，取值 0 到 1。"
+      "field.smooth.hint": "每次新观测折算进当前速率的权重，取值 0 到 1。",
+      "page.nav": "鲸尾摆动",
+      "page.title": "鲸尾摆动设置",
+      "page.summary": "按实时 token 速率逐帧摆动的运行指示器鲸尾。",
+      "page.unavailable": "该插件当前未加载，暂时没有可配置项。",
+      "page.readOnly": "本部署的设置为只读。",
+      "page.save": "保存",
+      "page.saving": "保存中…",
+      "page.saveFailed": "本部署没有接受这些值，改动已保留。",
+      "page.overridden": "已覆盖",
+      "page.reset": "恢复默认",
+      "page.invalidNumber": "仅接受数字；留空表示使用默认值。"
     },
     "en": {
       "group.sway": "Sway",
@@ -372,7 +384,18 @@
       "field.sampleMs.label": "Sampling interval (ms)",
       "field.sampleMs.hint": "Interval between two text-length observations.",
       "field.smooth.label": "Smoothing weight",
-      "field.smooth.hint": "Weight each fresh measurement carries in the current rate, from 0 to 1."
+      "field.smooth.hint": "Weight each fresh measurement carries in the current rate, from 0 to 1.",
+      "page.nav": "Whale tail",
+      "page.title": "Whale tail settings",
+      "page.summary": "The running-indicator whale tail, stepping frames with the live token rate.",
+      "page.unavailable": "This plugin is not loaded, so it has no configuration at the moment.",
+      "page.readOnly": "This deployment stores settings read-only.",
+      "page.save": "Save",
+      "page.saving": "Saving…",
+      "page.saveFailed": "The deployment did not accept these values; the edits were kept.",
+      "page.overridden": "Overridden",
+      "page.reset": "Reset to default",
+      "page.invalidNumber": "Only a number is accepted; an empty field uses the default."
     }
   };
   /* dsh-whale-sway:settings:end */
@@ -1412,6 +1435,11 @@
     var host = '.' + PAGE_CLASS;
     return (
       host + '{display:flex;flex-direction:column;gap:18px;color:var(--dsw-alias-label-primary)}' +
+      host + '__section{display:flex;flex-direction:column;gap:12px}' +
+      host + '__title{margin:0;font-size:16px;font-weight:600;line-height:24px;' +
+      'color:var(--dsw-alias-label-primary)}' +
+      host + '__summary{margin:0;font-size:13px;line-height:20px;' +
+      'color:var(--dsw-alias-label-secondary)}' +
       host + ' section{display:flex;flex-direction:column;gap:10px}' +
       host + ' h4{margin:0;font-size:13px;font-weight:600;line-height:20px;' +
       'color:var(--dsw-alias-label-secondary)}' +
@@ -1683,7 +1711,18 @@
       );
     }
 
-    return ConfigCard;
+    /** Settings sidebar section, with its own accessible heading and summary. */
+    function SettingsSection(props) {
+      return h(
+        'section',
+        { className: PAGE_CLASS + '__section', 'aria-labelledby': PAGE_CLASS + '__title' },
+        h('h2', { id: PAGE_CLASS + '__title', className: PAGE_CLASS + '__title' }, props.t('page.title')),
+        h('p', { className: PAGE_CLASS + '__summary' }, props.t('page.summary')),
+        h(ConfigCard, props),
+      );
+    }
+
+    return { ConfigCard: ConfigCard, SettingsSection: SettingsSection };
   }
 
   /** Inject the page's layout rules, tagged like every shipped bundle stylesheet. */
@@ -1775,7 +1814,7 @@
       var store = model.bind(function () {
         return projectForm(model);
       });
-      var Card = createConfigCard(React, primitives);
+      var Cards = createConfigCard(React, primitives);
 
       track(
         scoped.configForms.whileServed([SETTINGS_NS], function () {
@@ -1789,7 +1828,7 @@
                   return pageFace(model, store);
                 },
               },
-              Card,
+              Cards.ConfigCard,
             );
           });
           var offBundle = scoped.slots.inject('plugins.bundle.config', function () {
@@ -1802,12 +1841,30 @@
                   return pageFace(model, store);
                 },
               },
-              Card,
+              Cards.ConfigCard,
+            );
+          });
+          var offSettings = scoped.slots.inject('settings.section', function () {
+            return scoped.slots.register(
+              {
+                name: 'settings.section',
+                id: SETTINGS_NS,
+                order: 60,
+                label: function () {
+                  return scoped.locale.bind(SETTINGS_NS)('page.nav');
+                },
+                locale: SETTINGS_NS,
+                inject: function () {
+                  return pageFace(model, store);
+                },
+              },
+              Cards.SettingsSection,
             );
           });
           return function () {
             offRow();
             offBundle();
+            offSettings();
           };
         }),
       );

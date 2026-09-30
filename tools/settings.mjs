@@ -202,6 +202,14 @@ export const SETTINGS_FIELDS = [
  * in the Plugins list. Keys are flat, exactly as `t()` addresses them.
  */
 export const SETTINGS_COPY = {
+  'page.nav': {
+    zh: '鲸尾摆动',
+    en: 'Whale tail',
+  },
+  'page.title': {
+    zh: '鲸尾摆动设置',
+    en: 'Whale tail settings',
+  },
   'page.summary': {
     zh: '按实时 token 速率逐帧摆动的运行指示器鲸尾。',
     en: 'The running-indicator whale tail, stepping frames with the live token rate.',
@@ -274,6 +282,10 @@ export function settingsDictionary() {
       zh[`field.${field.id}.option.${option.value}`] = option.label.zh;
       en[`field.${field.id}.option.${option.value}`] = option.label.en;
     }
+  }
+  for (const [key, copy] of Object.entries(SETTINGS_COPY)) {
+    zh[key] = copy.zh;
+    en[key] = copy.en;
   }
   return { zh, en };
 }
